@@ -1,0 +1,6 @@
+{
+  "name": "SMC Trading OS - Core Architecture & Canonical Type System",
+  "description": "Foundational type system, canonical data contracts, instrument registry, and architecture registry for an institutional Smart Money Concepts (SMC) intraday trading OS.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
