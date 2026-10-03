@@ -5,7 +5,7 @@
  * Market Data Normalization Engine
  *
  * Provides precision normalization, pip calculations, timestamp boundary alignment,
- * and canonical decimal representation for the 26 approved instruments.
+ * and canonical decimal representation for all approved catalog instruments.
  */
 
 import { InstrumentSymbol, Timeframe } from '../types/smc';

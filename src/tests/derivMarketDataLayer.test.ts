@@ -21,6 +21,7 @@ import {
   TIMEFRAME_TO_DERIV_GRANULARITY,
 } from '../engine/derivAdapter';
 import { DerivConnectionHealthEngine } from '../engine/derivConnectionHealthEngine';
+import { APPROVED_INSTRUMENTS_LIST } from '../engine/instrumentMarketConfiguration';
 import { SymbolMappingEngine } from '../engine/symbolMappingEngine';
 import { formatPriceWithTimestamp, formatTimeSince } from '../utils/timeFormat';
 
@@ -57,7 +58,7 @@ export function runDerivLayerTests(): void {
   assertEqual(SymbolMappingEngine.toDerivSymbol('GBP_USD'), 'frxGBPUSD', 'GBP_USD must map to frxGBPUSD');
   assertEqual(SymbolMappingEngine.toDerivSymbol('USD_JPY'), 'frxUSDJPY', 'USD_JPY must map to frxUSDJPY');
   assertEqual(SymbolMappingEngine.toDerivSymbol('XAU_USD'), 'frxXAUUSD', 'XAU_USD must map to frxXAUUSD');
-  assertEqual(SymbolMappingEngine.toDerivSymbol('US30_USD'), 'OTC_DJI', 'US30_USD must map to OTC_DJI');
+  assertEqual(SymbolMappingEngine.toDerivSymbol('OTC_DJI'), 'OTC_DJI', 'OTC_DJI must map to OTC_DJI');
 
   // Verify active symbols catalog verification (reporting unoffered symbols without guessing)
   const mockDerivCatalog = [
@@ -66,9 +67,17 @@ export function runDerivLayerTests(): void {
     { symbol: 'frxUSDJPY', display_name: 'USD/JPY', market: 'forex', submarket: 'major_pairs', symbol_type: 'forex' },
   ];
   const auditReport = SymbolMappingEngine.verifyAgainstActiveSymbols(mockDerivCatalog);
-  assertEqual(auditReport.totalApproved, 26, 'Total approved instruments must be 26');
+  assertEqual(
+    auditReport.totalApproved,
+    APPROVED_INSTRUMENTS_LIST.length,
+    `Total approved instruments must match catalog count (${APPROVED_INSTRUMENTS_LIST.length})`,
+  );
   assertEqual(auditReport.offeredCount, 3, 'Offered count must equal 3 in this mock catalog');
-  assertEqual(auditReport.unofferedCount, 23, 'Unoffered count must equal 23');
+  assertEqual(
+    auditReport.unofferedCount,
+    APPROVED_INSTRUMENTS_LIST.length - 3,
+    `Unoffered count must equal total minus 3 (${APPROVED_INSTRUMENTS_LIST.length - 3})`,
+  );
   assert(
     auditReport.unoffered.some((u) => u.canonicalSymbol === 'AUD_USD'),
     'Unoffered report must explicitly include missing symbols with reason',
@@ -111,8 +120,8 @@ export function runDerivLayerTests(): void {
     'Block code must be NO_ACTIVE_DATA_SOURCE on error',
   );
 
-  // Staleness block
-  safety.evaluateCandleStaleness('EUR_USD', '5M', now - 20 * 60 * 1000, fiveMinMs);
+  // Staleness block (test with isMarketOpen = true)
+  safety.evaluateCandleStaleness('EUR_USD', '5M', now - 20 * 60 * 1000, fiveMinMs, true);
   const decStale = safety.canAnalyze('EUR_USD', '5M');
   assertEqual(decStale.allowed, false, 'Stale candle must be blocked');
   assert(

@@ -29,7 +29,10 @@ export type SystemArchitecturalLayer =
   | 'SMC_STRUCTURAL_CORE'
   | 'SETUP_CONFLUENCE_SYNTHESIS'
   | 'RISK_AND_EXECUTION_GOVERNANCE'
-  | 'SIMULATION_PERSISTENCE_AUDIT';
+  | 'SIMULATION_PERSISTENCE_AUDIT'
+  | 'PRODUCT_ACCESS_AND_MONETIZATION';
+
+export type EngineStatus = 'BUILT' | 'NOT_BUILT';
 
 export type EngineModuleId =
   // Layer 1: Data Ingestion & Contracts
@@ -86,15 +89,29 @@ export type EngineModuleId =
   | 'SHADOW_EXECUTION_HARNESS'
   | 'STATE_PERSISTENCE_LEDGER'
   | 'AUDIT_TELEMETRY_WATCHDOG'
-  | 'SMC_KNOWLEDGE_CORE_ENGINE';
+  | 'SMC_KNOWLEDGE_CORE_ENGINE'
+  // Layer 7: Product Access & Monetization (Modules 34-44)
+  | 'IDENTITY_SESSION_SERVICE'
+  | 'BILLING_SUBSCRIPTION_SERVICE'
+  | 'ACCESS_PROFILE_ENGINE'
+  | 'STYLE_PROFILE_CLASSIFIER'
+  | 'ACCESS_GATEWAY_AND_ENGINE_PROTECTION'
+  | 'MT5_LINK_SERVICE'
+  | 'ADMIN_CONTROL_CONSOLE'
+  | 'SUBSCRIBER_APP_SHELL'
+  | 'NOTIFICATION_SERVICE'
+  | 'AUDIT_SECURITY_LEDGER'
+  | 'MONETIZATION_ANALYTICS';
 
 export interface EngineModuleDescriptor {
   readonly id: EngineModuleId;
+  readonly moduleIdNumber?: number;
   readonly name: string;
   readonly layer: SystemArchitecturalLayer;
   readonly description: string; // Mandatory one-line canonical description
   readonly dependencies: readonly EngineModuleId[];
   readonly enforcesHardRules: readonly string[];
+  readonly engineStatus?: EngineStatus;
 }
 
 // ============================================================================
@@ -184,7 +201,7 @@ export const SYSTEM_ARCHITECTURE_REGISTRY: Readonly<
     name: 'Instrument Market Registry',
     layer: 'DATA_INGESTION_AND_CONTRACTS',
     description:
-      'Maintains authoritative pip sizes, session killzones, lot multipliers, and ATR volatility profiles for the 26 approved instruments.',
+      'Maintains authoritative pip sizes, session killzones, lot multipliers, and ATR volatility profiles for all approved instruments in the Deriv catalog (25 forex, 4 metals, 12 indices, 2 crypto).',
     dependencies: [],
     enforcesHardRules: ['HARD_RULE_1_CANONICAL_DATA_SOURCE'],
   },
@@ -781,6 +798,141 @@ export const SYSTEM_ARCHITECTURE_REGISTRY: Readonly<
       'HARD_RULE_3_FIXED_TIMEFRAME_HIERARCHY',
       'HARD_RULE_4_EXECUTION_TIMEFRAME_ISOLATION',
     ],
+  },
+
+  // --------------------------------------------------------------------------
+  // LAYER 7: PRODUCT ACCESS AND MONETIZATION (MODULES 34-44)
+  // --------------------------------------------------------------------------
+  IDENTITY_SESSION_SERVICE: {
+    id: 'IDENTITY_SESSION_SERVICE',
+    moduleIdNumber: 34,
+    name: 'Identity & Session Service',
+    layer: 'PRODUCT_ACCESS_AND_MONETIZATION',
+    engineStatus: 'NOT_BUILT',
+    description:
+      'Manages user authentication, credentials, session tokens, device fingerprinting, and security lifecycle.',
+    dependencies: [],
+    enforcesHardRules: [],
+  },
+
+  BILLING_SUBSCRIPTION_SERVICE: {
+    id: 'BILLING_SUBSCRIPTION_SERVICE',
+    moduleIdNumber: 35,
+    name: 'Billing & Subscription Service',
+    layer: 'PRODUCT_ACCESS_AND_MONETIZATION',
+    engineStatus: 'NOT_BUILT',
+    description:
+      'Governs subscription tiers (Free, Trader, Institutional), recurring billing, payment gateway sync, and plan lifecycles.',
+    dependencies: ['IDENTITY_SESSION_SERVICE'],
+    enforcesHardRules: [],
+  },
+
+  ACCESS_PROFILE_ENGINE: {
+    id: 'ACCESS_PROFILE_ENGINE',
+    moduleIdNumber: 36,
+    name: 'Access Profile Engine',
+    layer: 'PRODUCT_ACCESS_AND_MONETIZATION',
+    engineStatus: 'NOT_BUILT',
+    description:
+      'Evaluates user entitlements, instrument access quotas, asset class limits, and feature authorizations.',
+    dependencies: ['IDENTITY_SESSION_SERVICE', 'BILLING_SUBSCRIPTION_SERVICE'],
+    enforcesHardRules: [],
+  },
+
+  STYLE_PROFILE_CLASSIFIER: {
+    id: 'STYLE_PROFILE_CLASSIFIER',
+    moduleIdNumber: 37,
+    name: 'Style Profile Classifier',
+    layer: 'PRODUCT_ACCESS_AND_MONETIZATION',
+    engineStatus: 'NOT_BUILT',
+    description:
+      'Classifies trader profiles and execution styles to tailor analytical outputs and risk parameters.',
+    dependencies: ['IDENTITY_SESSION_SERVICE'],
+    enforcesHardRules: [],
+  },
+
+  ACCESS_GATEWAY_AND_ENGINE_PROTECTION: {
+    id: 'ACCESS_GATEWAY_AND_ENGINE_PROTECTION',
+    moduleIdNumber: 38,
+    name: 'Access Gateway & Engine Protection',
+    layer: 'PRODUCT_ACCESS_AND_MONETIZATION',
+    engineStatus: 'NOT_BUILT',
+    description:
+      'Enforces reverse-proxy rate limiting, token verification, and fail-closed security shielding for core SMC calculation engines.',
+    dependencies: ['ACCESS_PROFILE_ENGINE'],
+    enforcesHardRules: ['HARD_RULE_1_CANONICAL_DATA_SOURCE'],
+  },
+
+  MT5_LINK_SERVICE: {
+    id: 'MT5_LINK_SERVICE',
+    moduleIdNumber: 39,
+    name: 'MT5 Link Service',
+    layer: 'PRODUCT_ACCESS_AND_MONETIZATION',
+    engineStatus: 'NOT_BUILT',
+    description:
+      'Bridges trading accounts, credentials, and signal routing to MetaTrader 5 execution terminals and brokers.',
+    dependencies: ['IDENTITY_SESSION_SERVICE', 'ACCESS_PROFILE_ENGINE'],
+    enforcesHardRules: [],
+  },
+
+  ADMIN_CONTROL_CONSOLE: {
+    id: 'ADMIN_CONTROL_CONSOLE',
+    moduleIdNumber: 40,
+    name: 'Admin Control Console',
+    layer: 'PRODUCT_ACCESS_AND_MONETIZATION',
+    engineStatus: 'NOT_BUILT',
+    description:
+      'Administrative operations portal for tenant management, subscriber overrides, system health monitoring, and tier provisioning.',
+    dependencies: ['IDENTITY_SESSION_SERVICE', 'ACCESS_PROFILE_ENGINE'],
+    enforcesHardRules: [],
+  },
+
+  SUBSCRIBER_APP_SHELL: {
+    id: 'SUBSCRIBER_APP_SHELL',
+    moduleIdNumber: 41,
+    name: 'Subscriber App Shell',
+    layer: 'PRODUCT_ACCESS_AND_MONETIZATION',
+    engineStatus: 'NOT_BUILT',
+    description:
+      'Subscriber-facing web application container, personalized workspace state, and responsive layout coordination.',
+    dependencies: ['IDENTITY_SESSION_SERVICE', 'ACCESS_PROFILE_ENGINE'],
+    enforcesHardRules: [],
+  },
+
+  NOTIFICATION_SERVICE: {
+    id: 'NOTIFICATION_SERVICE',
+    moduleIdNumber: 42,
+    name: 'Notification Service',
+    layer: 'PRODUCT_ACCESS_AND_MONETIZATION',
+    engineStatus: 'NOT_BUILT',
+    description:
+      'Delivers multi-channel alerts (SSE, webhook, push, email) for institutional liquidity sweeps, POI triggers, and subscription notices.',
+    dependencies: ['IDENTITY_SESSION_SERVICE'],
+    enforcesHardRules: [],
+  },
+
+  AUDIT_SECURITY_LEDGER: {
+    id: 'AUDIT_SECURITY_LEDGER',
+    moduleIdNumber: 43,
+    name: 'Audit & Security Ledger',
+    layer: 'PRODUCT_ACCESS_AND_MONETIZATION',
+    engineStatus: 'NOT_BUILT',
+    description:
+      'Immutable append-only audit trail logging security events, access grants, billing transitions, and administrative actions.',
+    dependencies: ['IDENTITY_SESSION_SERVICE', 'ACCESS_PROFILE_ENGINE'],
+    enforcesHardRules: [],
+  },
+
+  MONETIZATION_ANALYTICS: {
+    id: 'MONETIZATION_ANALYTICS',
+    moduleIdNumber: 44,
+    name: 'Monetization Analytics',
+    layer: 'PRODUCT_ACCESS_AND_MONETIZATION',
+    engineStatus: 'NOT_BUILT',
+    description:
+      'Tracks conversion funnels, subscription retention, churn metrics, and revenue analytics for platform operations.',
+    dependencies: ['BILLING_SUBSCRIPTION_SERVICE', 'AUDIT_SECURITY_LEDGER'],
+    enforcesHardRules: [],
   },
 };
 

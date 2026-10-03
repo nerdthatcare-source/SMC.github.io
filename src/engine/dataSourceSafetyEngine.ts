@@ -17,6 +17,7 @@ import {
   CandleIntegrityEngine,
   MultiTimeframeIntegrityReport,
 } from './candleIntegrityEngine';
+import { DerivCatalogEngine } from './derivCatalogEngine';
 
 export type SafetyBlockReasonCode =
   | 'NO_ACTIVE_DATA_SOURCE'
@@ -167,21 +168,33 @@ export class DataSourceSafetyEngine {
   }
 
   // ==========================================================================
-  // STALENESS DIRECT CHECK
+  // STALENESS DIRECT CHECK (MARKET-HOURS AWARE)
   // ==========================================================================
 
   public evaluateCandleStaleness(
-    symbol: InstrumentSymbol,
+    symbol: InstrumentSymbol | string,
     timeframe: Timeframe,
     latestCandleTimestamp: number | null,
     intervalMs: number,
+    isMarketOpen?: boolean,
   ): void {
     const blockKey = `STALENESS_${symbol}_${timeframe}`;
+
+    // If market is currently closed per Deriv trading_times, lack of ticks is normal, not STALE_DATA
+    const effectiveIsOpen =
+      isMarketOpen !== undefined
+        ? isMarketOpen
+        : DerivCatalogEngine.isMarketCurrentlyOpen(symbol).isOpen;
+
+    if (!effectiveIsOpen) {
+      this.clearBlock(blockKey);
+      return;
+    }
 
     if (!latestCandleTimestamp) {
       this.setBlock(blockKey, {
         id: blockKey,
-        symbol,
+        symbol: symbol as InstrumentSymbol,
         timeframe,
         code: 'STALE_DATA',
         severity: 'BLOCKING',
@@ -197,7 +210,7 @@ export class DataSourceSafetyEngine {
     if (ageMs > 2 * intervalMs) {
       this.setBlock(blockKey, {
         id: blockKey,
-        symbol,
+        symbol: symbol as InstrumentSymbol,
         timeframe,
         code: 'STALE_DATA',
         severity: 'BLOCKING',
@@ -308,6 +321,19 @@ export class DataSourceSafetyEngine {
   private clearBlock(key: string): void {
     if (this.activeBlocks.has(key)) {
       this.activeBlocks.delete(key);
+      this.notifyListeners();
+    }
+  }
+
+  public clearSymbolBlocks(symbol: string): void {
+    let changed = false;
+    for (const [key, block] of Array.from(this.activeBlocks.entries())) {
+      if (block.symbol === symbol || key.includes(symbol)) {
+        this.activeBlocks.delete(key);
+        changed = true;
+      }
+    }
+    if (changed) {
       this.notifyListeners();
     }
   }

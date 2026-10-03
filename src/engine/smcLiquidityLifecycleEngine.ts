@@ -330,6 +330,18 @@ export class SmcLiquidityStore {
   }
 
   /**
+   * Clears all scoped instances for a specific symbol.
+   */
+  public static clearSymbol(symbol: string): void {
+    for (const [key, scoped] of this.scopedInstances.entries()) {
+      if (key.startsWith(`${symbol}:`)) {
+        scoped.clear();
+        this.scopedInstances.delete(key);
+      }
+    }
+  }
+
+  /**
    * Clears all scoped instances and singleton instance.
    */
   public static clearAll(): void {

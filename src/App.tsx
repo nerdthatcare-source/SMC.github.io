@@ -12,6 +12,8 @@ import {
   AlertTriangle,
   ArrowRight,
   BarChart3,
+  BookOpen,
+  Check,
   CheckCircle2,
   Clock,
   Code2,
@@ -26,6 +28,7 @@ import {
   Link,
   Lock,
   Play,
+  Plus,
   Radio,
   RefreshCw,
   Scale,
@@ -35,6 +38,8 @@ import {
   ShieldCheck,
   StopCircle,
   Terminal,
+  Trash2,
+  X,
   Zap,
 } from 'lucide-react';
 
@@ -68,9 +73,11 @@ import {
   StreamEvent,
 } from './services/marketDataApiClient';
 import {
+  CatalogInstrumentItem,
   DerivActiveSymbol,
   DerivBackfillJobResult,
   DerivHealthMetrics,
+  WatchlistEntry,
 } from './types/smc';
 import {
   SymbolMappingEngine,
@@ -163,144 +170,6 @@ type ActiveTab =
   | 'instruments'
   | 'architecture';
 
-function createInitialBaselineCandles(): Record<Timeframe, readonly CanonicalCandle[]> {
-  const baseTime = Date.now() - 24 * 3600 * 1000;
-  const hourMs = 3600 * 1000;
-  const fifteenMs = 900 * 1000;
-  const fiveMs = 300 * 1000;
-  const oneMs = 60 * 1000;
-
-  const ohlc1H: CanonicalCandle[] = [];
-  const ohlc15M: CanonicalCandle[] = [];
-  const ohlc5M: CanonicalCandle[] = [];
-
-  const seedH1Bars: { open: number; high: number; low: number; close: number }[] = [
-    { open: 1.084, high: 1.0855, low: 1.0835, close: 1.085 },
-    { open: 1.085, high: 1.0865, low: 1.0842, close: 1.0862 },
-    { open: 1.0862, high: 1.0885, low: 1.0858, close: 1.088 },
-    { open: 1.088, high: 1.0882, low: 1.0865, close: 1.087 },
-    { open: 1.087, high: 1.0886, low: 1.0868, close: 1.0884 },
-    { open: 1.0884, high: 1.0885, low: 1.0855, close: 1.086 },
-    { open: 1.086, high: 1.0865, low: 1.0838, close: 1.0842 },
-    { open: 1.0842, high: 1.0848, low: 1.0822, close: 1.0826 },
-    { open: 1.0826, high: 1.083, low: 1.0812, close: 1.0822 },
-    { open: 1.0822, high: 1.0828, low: 1.0815, close: 1.0818 },
-    { open: 1.0818, high: 1.0862, low: 1.0816, close: 1.0858 },
-    { open: 1.0858, high: 1.0898, low: 1.0852, close: 1.0895 },
-    { open: 1.0895, high: 1.0925, low: 1.089, close: 1.092 },
-    { open: 1.092, high: 1.0925, low: 1.089, close: 1.0895 },
-    { open: 1.0895, high: 1.09, low: 1.0865, close: 1.087 },
-    { open: 1.087, high: 1.0875, low: 1.084, close: 1.0848 },
-  ];
-
-  for (let h = 0; h < seedH1Bars.length; h++) {
-    const bar = seedH1Bars[h];
-    const hTimestamp = baseTime + h * hourMs;
-    const hOpen = bar.open;
-    const hHigh = bar.high;
-    const hLow = bar.low;
-    const hClose = bar.close;
-
-    ohlc1H.push({
-      symbol: 'EUR_USD',
-      timeframe: '1H',
-      timestamp: hTimestamp,
-      isoTimestamp: new Date(hTimestamp).toISOString(),
-      open: MarketDataNormalization.roundToPrecision(hOpen, 'EUR_USD'),
-      high: MarketDataNormalization.roundToPrecision(hHigh, 'EUR_USD'),
-      low: MarketDataNormalization.roundToPrecision(hLow, 'EUR_USD'),
-      close: MarketDataNormalization.roundToPrecision(hClose, 'EUR_USD'),
-      volume: 3200 + h * 80,
-      isComplete: true,
-      source: CANONICAL_BROKER_ID,
-      spreadPips: 0.8,
-    });
-
-    const subDeltas = [
-      { o: hOpen, c: (hOpen + hHigh) / 2, h: hHigh, l: Math.min(hOpen, hLow) },
-      { o: (hOpen + hHigh) / 2, c: (hHigh + hLow) / 2, h: hHigh, l: hLow },
-      { o: (hHigh + hLow) / 2, c: (hLow + hClose) / 2, h: Math.max(hHigh, hClose), l: hLow },
-      { o: (hLow + hClose) / 2, c: hClose, h: Math.max(hClose, hHigh - 0.0002), l: hLow },
-    ];
-
-    for (let m15 = 0; m15 < 4; m15++) {
-      const m15Timestamp = hTimestamp + m15 * fifteenMs;
-      const sub = subDeltas[m15];
-      const subOpen = sub.o;
-      const subClose = sub.c;
-      const subHigh = Math.max(subOpen, subClose, sub.h);
-      const subLow = Math.min(subOpen, subClose, sub.l);
-
-      ohlc15M.push({
-        symbol: 'EUR_USD',
-        timeframe: '15M',
-        timestamp: m15Timestamp,
-        isoTimestamp: new Date(m15Timestamp).toISOString(),
-        open: MarketDataNormalization.roundToPrecision(subOpen, 'EUR_USD'),
-        high: MarketDataNormalization.roundToPrecision(subHigh, 'EUR_USD'),
-        low: MarketDataNormalization.roundToPrecision(subLow, 'EUR_USD'),
-        close: MarketDataNormalization.roundToPrecision(subClose, 'EUR_USD'),
-        volume: 850 + m15 * 40,
-        isComplete: true,
-        source: CANONICAL_BROKER_ID,
-        spreadPips: 0.8,
-      });
-
-      for (let m5 = 0; m5 < 3; m5++) {
-        const m5Timestamp = m15Timestamp + m5 * fiveMs;
-        const fiveOpen = m5 === 0 ? subOpen : m5 === 1 ? (subOpen + subClose) / 2 : (subOpen + 2 * subClose) / 3;
-        const fiveClose = m5 === 2 ? subClose : m5 === 0 ? (subOpen + subClose) / 2 : (subOpen + 2 * subClose) / 3;
-        const fiveHigh = Math.max(fiveOpen, fiveClose, subHigh);
-        const fiveLow = Math.min(fiveOpen, fiveClose, subLow);
-
-        ohlc5M.push({
-          symbol: 'EUR_USD',
-          timeframe: '5M',
-          timestamp: m5Timestamp,
-          isoTimestamp: new Date(m5Timestamp).toISOString(),
-          open: MarketDataNormalization.roundToPrecision(fiveOpen, 'EUR_USD'),
-          high: MarketDataNormalization.roundToPrecision(fiveHigh, 'EUR_USD'),
-          low: MarketDataNormalization.roundToPrecision(fiveLow, 'EUR_USD'),
-          close: MarketDataNormalization.roundToPrecision(fiveClose, 'EUR_USD'),
-          volume: 290 + m5 * 15,
-          isComplete: true,
-          source: CANONICAL_BROKER_ID,
-          spreadPips: 0.8,
-        });
-      }
-    }
-  }
-
-  const ohlc1M: CanonicalCandle[] = [];
-  const latest5M = ohlc5M[ohlc5M.length - 1];
-  if (latest5M) {
-    for (let m1 = 0; m1 < 5; m1++) {
-      const m1Timestamp = latest5M.timestamp + m1 * oneMs;
-      ohlc1M.push({
-        symbol: 'EUR_USD',
-        timeframe: '1M',
-        timestamp: m1Timestamp,
-        isoTimestamp: new Date(m1Timestamp).toISOString(),
-        open: latest5M.open,
-        high: latest5M.high,
-        low: latest5M.low,
-        close: latest5M.close,
-        volume: 60,
-        isComplete: true,
-        source: CANONICAL_BROKER_ID,
-        spreadPips: 0.8,
-      });
-    }
-  }
-
-  return {
-    '1H': ohlc1H,
-    '15M': ohlc15M,
-    '5M': ohlc5M,
-    '1M': ohlc1M,
-  };
-}
-
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('liquidity_poi');
 
@@ -313,6 +182,31 @@ export default function App() {
     useState<InstrumentSymbol>('EUR_USD');
   const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>('15M');
 
+  // Filtered Catalog & Watchlist State (Requirements 1, 2, 5)
+  const [watchlist, setWatchlist] = useState<readonly WatchlistEntry[]>([]);
+  const [catalogItems, setCatalogItems] = useState<readonly CatalogInstrumentItem[]>([]);
+  const [isCatalogOpen, setIsCatalogOpen] = useState(false);
+  const [catalogSearch, setCatalogSearch] = useState('');
+  const [catalogCategoryFilter, setCatalogCategoryFilter] = useState<
+    'ALL' | 'forex' | 'commodities' | 'indices' | 'cryptocurrency'
+  >('ALL');
+  const [isWatchlistOperating, setIsWatchlistOperating] = useState(false);
+
+  // Filtered Catalog View (Browse-Only, No Subscriptions)
+  const filteredCatalogItems = useMemo(() => {
+    return catalogItems.filter((item) => {
+      const matchesCategory =
+        catalogCategoryFilter === 'ALL' || item.category === catalogCategoryFilter;
+      const q = catalogSearch.toLowerCase().trim();
+      const matchesSearch =
+        !q ||
+        item.underlyingSymbol.toLowerCase().includes(q) ||
+        item.displayName.toLowerCase().includes(q) ||
+        item.submarket.toLowerCase().includes(q);
+      return matchesCategory && matchesSearch;
+    });
+  }, [catalogItems, catalogCategoryFilter, catalogSearch]);
+
   // Connection & Stream State (Received from Express backend)
   const [feedStatus, setFeedStatus] = useState<FeedStatus>('DISCONNECTED');
   const [healthMetrics, setHealthMetrics] =
@@ -324,36 +218,23 @@ export default function App() {
     useState<SymbolVerificationReport | null>(null);
   const [isVerifyingCatalog, setIsVerifyingCatalog] = useState(false);
 
-  // In-memory canonical candle batches across timeframes
+  // In-memory canonical candle batches across timeframes (purely real market data, zero synthetic)
   const [candleMap, setCandleMap] = useState<
     Record<Timeframe, readonly CanonicalCandle[]>
-  >(() => createInitialBaselineCandles());
+  >({
+    '1H': [],
+    '15M': [],
+    '5M': [],
+    '1M': [],
+  });
 
   const displayedCandles = candleMap[selectedTimeframe] || [];
 
-  const [latestTick, setLatestTick] = useState<CanonicalTick | null>({
-    symbol: 'EUR_USD',
-    timestamp: Date.now(),
-    isoTimestamp: new Date().toISOString(),
-    bid: 1.09915,
-    ask: 1.09925,
-    mid: 1.0992,
-    spreadPips: 1.0,
-    source: CANONICAL_BROKER_ID,
-  });
+  const [latestTick, setLatestTick] = useState<CanonicalTick | null>(null);
 
   // Integrity Report & Safety Decisions
   const [integrityReport, setIntegrityReport] =
-    useState<MultiTimeframeIntegrityReport | null>(() => {
-      const initial = createInitialBaselineCandles();
-      return CandleIntegrityEngine.auditMultiTimeframeSync(
-        'EUR_USD',
-        initial['1H'],
-        initial['15M'],
-        initial['5M'],
-        initial['1M'],
-      );
-    });
+    useState<MultiTimeframeIntegrityReport | null>(null);
   const [activeSafetyBlocks, setActiveSafetyBlocks] = useState<
     readonly ActiveSafetyBlock[]
   >([]);
@@ -419,7 +300,7 @@ export default function App() {
       displayedCandles[displayedCandles.length - 1]?.close ??
       (structureAnalysis.swings.length > 0
         ? structureAnalysis.swings[structureAnalysis.swings.length - 1].price
-        : 1.085);
+        : 0);
     return SmcDealingRangeEngine.computeDealingRange(
       structureAnalysis,
       lastPrice,
@@ -480,7 +361,7 @@ export default function App() {
       displayedCandles[displayedCandles.length - 1]?.close ??
       (structureAnalysis.swings.length > 0
         ? structureAnalysis.swings[structureAnalysis.swings.length - 1].price
-        : 1.085);
+        : 0);
     return SmcPoiIntelligenceEngine.rankPointsOfInterest({
       symbol: selectedSymbol,
       timeframe: selectedTimeframe as StructuralTimeframe,
@@ -584,12 +465,40 @@ export default function App() {
         console.warn('[App] Backend health check error:', err);
       });
 
+    // Fetch active watchlist on startup
+    MarketDataApiClient.fetchWatchlist()
+      .then((list) => {
+        if (list && list.length > 0) {
+          setWatchlist(list);
+          // If current selectedSymbol is not in the watchlist, align to first watchlisted symbol
+          if (!list.some((w) => w.canonicalSymbol === selectedSymbol || w.derivSymbol === selectedSymbol)) {
+            setSelectedSymbol(list[0].canonicalSymbol as InstrumentSymbol);
+          }
+        }
+      })
+      .catch((err) => {
+        console.warn('[App] Watchlist load error:', err);
+      });
+
+    // Fetch browsable catalog (browse-only, no subscriptions)
+    MarketDataApiClient.fetchCatalog()
+      .then((items) => {
+        if (items && items.length > 0) {
+          setCatalogItems(items);
+        }
+      })
+      .catch((err) => {
+        console.warn('[App] Catalog load error:', err);
+      });
+
     loadMarketDataForSymbol(selectedSymbol);
 
     const unsubscribeSSE = MarketDataApiClient.subscribeStreamEvents((event: StreamEvent) => {
       if (event.type === 'init' || event.type === 'health') {
         if (event.status) setFeedStatus(event.status);
         if (event.metrics) setHealthMetrics(event.metrics);
+      } else if (event.type === 'watchlist' && event.watchlist) {
+        setWatchlist(event.watchlist);
       } else if (event.type === 'tick' && event.tick) {
         if (event.tick.symbol === selectedSymbol) {
           setLatestTick(event.tick);
@@ -627,6 +536,76 @@ export default function App() {
   useEffect(() => {
     loadMarketDataForSymbol(selectedSymbol);
   }, [selectedSymbol, loadMarketDataForSymbol]);
+
+  // Add instrument from Filtered Catalog to active Watchlist
+  const handleAddToWatchlist = async (underlyingSymbol: string) => {
+    setIsWatchlistOperating(true);
+    setStatusMessage({
+      text: `Adding ${underlyingSymbol} to Watchlist: multiplexing WebSocket subscription, running rate-limited backfill, and starting Phase 2-4 analysis...`,
+      type: 'info',
+    });
+    try {
+      const res = await MarketDataApiClient.addToWatchlist(underlyingSymbol);
+      if (res.success && res.entry) {
+        setWatchlist((prev) => {
+          const exists = prev.some((w) => w.derivSymbol === res.entry.derivSymbol);
+          return exists ? prev : [...prev, res.entry];
+        });
+        setSelectedSymbol(res.entry.canonicalSymbol as InstrumentSymbol);
+        await loadMarketDataForSymbol(res.entry.canonicalSymbol as InstrumentSymbol);
+        setStatusMessage({
+          text: `Successfully added ${res.entry.displayName} to active watchlist. Live candles & SMC pipeline active.`,
+          type: 'success',
+        });
+      }
+    } catch (err: any) {
+      setStatusMessage({
+        text: `Failed to add ${underlyingSymbol} to watchlist: ${err.message}`,
+        type: 'error',
+      });
+    } finally {
+      setIsWatchlistOperating(false);
+    }
+  };
+
+  // Remove instrument from Watchlist with complete state teardown
+  const handleRemoveFromWatchlist = async (rawSymbol: string) => {
+    setIsWatchlistOperating(true);
+    const derivSym = SymbolMappingEngine.toDerivSymbol(rawSymbol);
+    const canSym = SymbolMappingEngine.toCanonicalSymbol(derivSym);
+    setStatusMessage({
+      text: `Removing ${derivSym} from Watchlist: closing WebSocket subscription and completely clearing all cached engine state...`,
+      type: 'info',
+    });
+    try {
+      await MarketDataApiClient.removeFromWatchlist(derivSym);
+      setWatchlist((prev) =>
+        prev.filter((w) => w.derivSymbol !== derivSym && w.canonicalSymbol !== canSym),
+      );
+
+      // If the removed instrument was the currently selected instrument, switch to another watchlisted instrument
+      if (selectedSymbol === canSym || selectedSymbol === derivSym) {
+        const remaining = watchlist.filter(
+          (w) => w.derivSymbol !== derivSym && w.canonicalSymbol !== canSym,
+        );
+        if (remaining.length > 0) {
+          setSelectedSymbol(remaining[0].canonicalSymbol as InstrumentSymbol);
+        }
+      }
+
+      setStatusMessage({
+        text: `Removed ${derivSym} from active watchlist. All cached market data, liquidity pools, and safety state completely cleared.`,
+        type: 'info',
+      });
+    } catch (err: any) {
+      setStatusMessage({
+        text: `Failed to remove ${derivSym} from watchlist: ${err.message}`,
+        type: 'error',
+      });
+    } finally {
+      setIsWatchlistOperating(false);
+    }
+  };
 
   const handleStartStream = async () => {
     try {
@@ -673,7 +652,7 @@ export default function App() {
     try {
       setIsVerifyingCatalog(true);
       setStatusMessage({
-        text: 'Querying backend (/api/market/active-symbols) to verify catalog of 26 approved instruments against Deriv...',
+        text: `Querying backend (/api/market/active-symbols) to verify catalog of ${APPROVED_INSTRUMENTS_LIST.length} approved instruments against Deriv...`,
         type: 'info',
       });
       const report = await MarketDataApiClient.fetchActiveSymbols();
@@ -708,7 +687,7 @@ export default function App() {
       await loadMarketDataForSymbol('EUR_USD');
       setIsStreamingActive(true);
 
-      const priceShown = result.latestTick?.mid ?? result.latestCandle?.close ?? 1.085;
+      const priceShown = result.latestTick?.mid ?? result.latestCandle?.close ?? 0;
       const ts = result.latestTick?.timestamp ?? result.latestCandle?.timestamp ?? Date.now();
 
       setStatusMessage({
@@ -970,7 +949,7 @@ export default function App() {
               }`}
             >
               <BarChart3 className="h-3.5 w-3.5" />
-              Symbols (26)
+              Symbols ({catalogItems.length > 0 ? catalogItems.length : APPROVED_INSTRUMENTS_LIST.length})
             </button>
 
             <button
@@ -1021,21 +1000,47 @@ export default function App() {
           <div className="flex flex-wrap items-center gap-4">
             <div className="flex items-center gap-2">
               <span className="text-xs text-slate-400 font-semibold uppercase">
-                Instrument:
+                Active Watchlist:
               </span>
-              <select
-                value={selectedSymbol}
-                onChange={(e) =>
-                  setSelectedSymbol(e.target.value as InstrumentSymbol)
-                }
-                className="bg-slate-950 border border-slate-700 text-xs font-mono font-bold text-cyan-300 rounded-lg px-3 py-1.5 focus:outline-none focus:border-indigo-500"
+              {watchlist.length > 0 ? (
+                <select
+                  value={selectedSymbol}
+                  onChange={(e) =>
+                    setSelectedSymbol(e.target.value as InstrumentSymbol)
+                  }
+                  className="bg-slate-950 border border-slate-700 text-xs font-mono font-bold text-cyan-300 rounded-lg px-3 py-1.5 focus:outline-none focus:border-indigo-500"
+                >
+                  {watchlist.map((entry) => (
+                    <option key={entry.symbol} value={entry.canonicalSymbol}>
+                      {entry.displayName} ({entry.category.toUpperCase()}) {entry.isStreaming ? '• Streaming' : ''}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span className="text-xs text-amber-400 font-mono italic">
+                  Watchlist empty
+                </span>
+              )}
+
+              <button
+                onClick={() => setIsCatalogOpen(true)}
+                className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 flex items-center gap-1.5 transition"
+                title="Browse Deriv Catalog (Browse-only) & Manage Watchlist"
               >
-                {APPROVED_INSTRUMENTS_LIST.map((inst) => (
-                  <option key={inst.symbol} value={inst.symbol}>
-                    {inst.symbol} - {inst.name} ({inst.assetClass})
-                  </option>
-                ))}
-              </select>
+                <BookOpen className="h-3.5 w-3.5 text-cyan-400" />
+                <span>Catalog ({catalogItems.length || 43})</span>
+              </button>
+
+              {watchlist.some((w) => w.canonicalSymbol === selectedSymbol || w.derivSymbol === selectedSymbol) && (
+                <button
+                  onClick={() => handleRemoveFromWatchlist(selectedSymbol)}
+                  disabled={isWatchlistOperating}
+                  className="p-1.5 rounded-lg text-xs text-rose-400 hover:bg-rose-950/60 border border-rose-900/40 transition"
+                  title={`Remove ${selectedSymbol} from Watchlist & fully clear all cached state`}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              )}
             </div>
 
             <div className="flex items-center gap-2">
@@ -1095,13 +1100,18 @@ export default function App() {
                     </span>
                   )}
                 </div>
-              ) : null;
+              ) : (
+                <div className="flex items-center gap-2 bg-slate-950 px-3 py-1.5 rounded-lg border border-cyan-800/60 text-cyan-400 font-sans">
+                  <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+                  <span className="font-semibold text-xs">Connecting to Deriv...</span>
+                </div>
+              );
             })()}
 
             <div className="flex items-center gap-2 bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800">
               <span className="text-slate-500">Live Spread:</span>
               <span className="font-bold text-white">
-                {latestTick ? `${latestTick.spreadPips} pips` : '0.8 pips'}
+                {latestTick ? `${latestTick.spreadPips} pips` : '---'}
               </span>
               {latestTick?.timestamp && (
                 <span className="text-[10px] text-slate-500">
@@ -1148,7 +1158,7 @@ export default function App() {
             currentPrice={
               latestTick?.mid ??
               displayedCandles[displayedCandles.length - 1]?.close ??
-              1.085
+              0
             }
             currentPriceTimestamp={
               latestTick?.timestamp ??
@@ -1205,6 +1215,17 @@ export default function App() {
                     Switch to 5M (Micro Confirmation)
                   </button>
                 </div>
+              </div>
+            ) : !structureAnalysis ? (
+              <div className="p-8 rounded-xl bg-slate-900/60 border border-slate-800 text-center space-y-4">
+                <div className="flex items-center justify-center gap-2 text-cyan-400 font-bold text-sm">
+                  <Activity className="h-5 w-5 animate-spin" />
+                  <span>Connecting to Deriv...</span>
+                </div>
+                <p className="text-xs text-slate-400 max-w-md mx-auto font-sans">
+                  Awaiting real canonical market candles for <span className="font-mono font-bold text-white">{selectedSymbol}</span> ({selectedTimeframe}) from the server-side Deriv WebSocket pipeline.
+                  Zero synthetic or fixture data is loaded by design.
+                </p>
               </div>
             ) : (
               <>
@@ -1754,7 +1775,7 @@ export default function App() {
                     className="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 flex items-center gap-1.5 transition disabled:opacity-50"
                   >
                     <CheckCircle2 className="h-3.5 w-3.5 text-cyan-400" />
-                    Verify 26 Active Symbols
+                    Verify Active Symbols ({catalogItems.length > 0 ? catalogItems.length : APPROVED_INSTRUMENTS_LIST.length})
                   </button>
                 </div>
               </div>
@@ -1945,10 +1966,17 @@ export default function App() {
                       <tr>
                         <td
                           colSpan={10}
-                          className="py-8 text-center text-slate-500 font-sans italic"
+                          className="py-12 text-center text-slate-400 font-sans"
                         >
-                          No candles in store for {selectedSymbol} {selectedTimeframe}.
-                          Click &quot;Fetch Live frxEURUSD Now&quot; or &quot;Run Backfill Recovery&quot; to ingest candles.
+                          <div className="flex flex-col items-center justify-center gap-2">
+                            <span className="flex items-center gap-2 text-cyan-400 font-semibold text-xs">
+                              <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+                              Connecting to Deriv...
+                            </span>
+                            <span className="text-xs text-slate-500">
+                              Awaiting real market candles for {selectedSymbol} ({selectedTimeframe}). Zero synthetic data allowed.
+                            </span>
+                          </div>
                         </td>
                       </tr>
                     ) : (
@@ -2375,7 +2403,7 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 5: 26 APPROVED INSTRUMENTS & SYMBOL MAPPING ENGINE */}
+        {/* TAB 5: APPROVED INSTRUMENTS & SYMBOL MAPPING ENGINE */}
         {activeTab === 'instruments' && (
           <div className="space-y-6">
             {/* Symbol Mapping Converter Tool */}
@@ -2415,7 +2443,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* List of 26 Canonical Instruments */}
+            {/* List of Canonical Instruments */}
             <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-900/50 shadow-xl">
               <table className="w-full text-left text-xs">
                 <thead className="bg-slate-950 border-b border-slate-800 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
@@ -2517,9 +2545,20 @@ export default function App() {
                         </div>
                       </div>
                     </div>
-                    <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-400">
-                      {mod.layer.replace(/_/g, ' ')}
-                    </span>
+                    <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                      <span
+                        className={`text-[9px] font-mono px-2 py-0.5 rounded font-bold border ${
+                          mod.engineStatus === 'NOT_BUILT'
+                            ? 'bg-amber-950/80 text-amber-300 border-amber-800'
+                            : 'bg-emerald-950/80 text-emerald-300 border-emerald-800'
+                        }`}
+                      >
+                        {mod.engineStatus || 'BUILT'}
+                      </span>
+                      <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-400">
+                        {mod.layer.replace(/_/g, ' ')}
+                      </span>
+                    </div>
                   </div>
 
                   <p className="text-xs text-slate-300 mt-2.5 leading-relaxed">
@@ -2549,6 +2588,190 @@ export default function App() {
         )}
       </main>
 
+      {/* Browsable Filtered Catalog Modal (Browse-Only: 4 Real Categories, No Subscriptions) */}
+      {isCatalogOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-4xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+            {/* Modal Header */}
+            <div className="p-5 border-b border-slate-800 flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <BookOpen className="h-5 w-5 text-cyan-400" />
+                  <h3 className="text-base font-bold text-white">
+                    Deriv Verified Instrument Catalog (Browse Only)
+                  </h3>
+                  <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-cyan-950/80 text-cyan-300 border border-cyan-800/60">
+                    {catalogItems.length} Real Symbols
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mt-1">
+                  Filtered strictly from Deriv active_symbols: Forex (25), Commodities (4), Indices (12), Cryptocurrency (2).
+                  Synthetic indices and baskets are excluded. Browsing creates NO subscriptions or engine load.
+                </p>
+              </div>
+              <button
+                onClick={() => setIsCatalogOpen(false)}
+                className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Filter Tabs & Search Bar */}
+            <div className="p-4 border-b border-slate-800/80 bg-slate-950/50 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-1.5">
+                {(['ALL', 'forex', 'commodities', 'indices', 'cryptocurrency'] as const).map((cat) => {
+                  const count =
+                    cat === 'ALL'
+                      ? catalogItems.length
+                      : catalogItems.filter((i) => i.category === cat).length;
+                  return (
+                    <button
+                      key={cat}
+                      onClick={() => setCatalogCategoryFilter(cat)}
+                      className={`px-3 py-1 rounded-lg text-xs font-mono font-medium transition ${
+                        catalogCategoryFilter === cat
+                          ? 'bg-cyan-600 text-white font-bold'
+                          : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                      }`}
+                    >
+                      {cat.toUpperCase()} ({count})
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="relative w-64">
+                <Search className="h-3.5 w-3.5 text-slate-400 absolute left-3 top-2.5" />
+                <input
+                  type="text"
+                  placeholder="Search symbols or names..."
+                  value={catalogSearch}
+                  onChange={(e) => setCatalogSearch(e.target.value)}
+                  className="w-full pl-8 pr-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+                />
+              </div>
+            </div>
+
+            {/* Catalog Grid / List */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-2.5">
+              {filteredCatalogItems.length === 0 ? (
+                <div className="text-center py-12 text-slate-500 text-xs">
+                  No catalog instruments match your search criteria.
+                </div>
+              ) : (
+                filteredCatalogItems.map((item) => {
+                  const isWatchlisted = watchlist.some(
+                    (w) =>
+                      w.derivSymbol === item.underlyingSymbol ||
+                      w.canonicalSymbol ===
+                        SymbolMappingEngine.toCanonicalSymbol(item.underlyingSymbol),
+                  );
+
+                  return (
+                    <div
+                      key={item.underlyingSymbol}
+                      className="p-3.5 rounded-xl border border-slate-800/80 bg-slate-950/60 hover:bg-slate-950 flex flex-wrap items-center justify-between gap-4 transition"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-lg bg-slate-800/80 border border-slate-700/80 flex items-center justify-center font-mono font-bold text-xs text-cyan-300">
+                          {item.underlyingSymbol.slice(0, 3)}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-white text-sm">
+                              {item.displayName}
+                            </span>
+                            <span className="font-mono text-xs text-slate-400">
+                              ({item.underlyingSymbol})
+                            </span>
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 uppercase">
+                              {item.category}
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2 mt-1 text-[11px] text-slate-400">
+                            <span>Submarket: {item.submarket}</span>
+                            <span>•</span>
+                            <span>Pip: {item.pipSize}</span>
+                            <span>•</span>
+                            {/* Real Market Hours & Trading Times */}
+                            <span className="flex items-center gap-1 font-mono">
+                              <span
+                                className={`w-2 h-2 rounded-full ${
+                                  item.isMarketOpenNow ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+                                }`}
+                              />
+                              <span
+                                className={
+                                  item.isMarketOpenNow
+                                    ? 'text-emerald-400 font-semibold'
+                                    : 'text-amber-400'
+                                }
+                              >
+                                {item.statusDescription}
+                              </span>
+                            </span>
+                            {item.tradingTimes && (
+                              <span className="text-slate-500 font-mono text-[10px]">
+                                ({item.tradingTimes.tradingDays.join(', ')} • {item.tradingTimes.openTimes.join(',')} - {item.tradingTimes.closeTimes.join(',')})
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Action Button */}
+                      <div className="flex items-center gap-2">
+                        {isWatchlisted ? (
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-emerald-400 flex items-center gap-1 font-semibold px-2.5 py-1 rounded-lg bg-emerald-950/40 border border-emerald-900/40">
+                              <Check className="h-3.5 w-3.5" />
+                              Watchlisted
+                            </span>
+                            <button
+                              onClick={() => handleRemoveFromWatchlist(item.underlyingSymbol)}
+                              disabled={isWatchlistOperating}
+                              className="px-2.5 py-1 rounded-lg text-xs font-medium text-rose-400 hover:bg-rose-950/60 border border-rose-900/40 flex items-center gap-1 transition"
+                              title="Unsubscribe & Clear All Cached Engine State"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              Remove
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => handleAddToWatchlist(item.underlyingSymbol)}
+                            disabled={isWatchlistOperating}
+                            className="px-3 py-1.5 rounded-lg text-xs font-bold bg-cyan-600 hover:bg-cyan-500 text-white flex items-center gap-1.5 shadow-md shadow-cyan-950 transition"
+                            title="Multiplex WebSocket subscription, staggered historical backfill, & start Phase 2-4 pipeline"
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                            Add to Watchlist
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-3 border-t border-slate-800 bg-slate-950 flex items-center justify-between text-xs text-slate-400">
+              <span>
+                Rate Limit Protection: Backfill requests staggered across 1H, 15M, 5M, 1M to strictly respect Deriv limits.
+              </span>
+              <button
+                onClick={() => setIsCatalogOpen(false)}
+                className="px-4 py-1.5 rounded-lg bg-slate-800 text-white hover:bg-slate-700 text-xs font-semibold"
+              >
+                Close Catalog
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Footer */}
       <footer className="border-t border-slate-800/80 bg-slate-900/60 px-6 py-3 text-[11px] text-slate-500 max-w-7xl mx-auto w-full flex flex-col md:flex-row items-center justify-between gap-2">
         <div className="flex items-center space-x-2">
@@ -2556,7 +2779,11 @@ export default function App() {
           <span>•</span>
           <span className="text-emerald-400">DERIV Canonical Market Data Layer</span>
           <span>•</span>
-          <span>26 Approved Instruments</span>
+          <span>
+            {catalogItems.length > 0
+              ? `${catalogItems.length} Deriv Catalog Symbols (25 Forex, 4 Metals, 12 Indices, 2 Crypto)`
+              : `${APPROVED_INSTRUMENTS_LIST.length} Approved Instruments`}
+          </span>
           <span>•</span>
           <span>Fail-Closed Safety Active</span>
         </div>

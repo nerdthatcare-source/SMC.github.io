@@ -22,6 +22,9 @@ import { createServer as createViteServer } from 'vite';
 dotenv.config();
 
 import { CanonicalDataEngine } from './src/engine/canonicalDataEngine';
+import { DatabaseConnection } from './src/db/database';
+import { DerivCatalogEngine } from './src/engine/derivCatalogEngine';
+import { WatchlistEngine } from './src/engine/watchlistEngine';
 import { SymbolMappingEngine } from './src/engine/symbolMappingEngine';
 import { APPROVED_INSTRUMENTS_LIST } from './src/engine/instrumentMarketConfiguration';
 import {
@@ -58,149 +61,7 @@ const engine = new CanonicalDataEngine({
   apiToken: derivApiToken,
 });
 
-// Helper to seed verified baseline historical candles for immediate startup analysis
-function seedServerBaselineData(targetEngine: CanonicalDataEngine) {
-  const baseTime = Date.now() - 24 * 3600 * 1000;
-  const hourMs = 3600 * 1000;
-  const fifteenMs = 900 * 1000;
-  const fiveMs = 300 * 1000;
-  const oneMs = 60 * 1000;
-
-  const ohlc1H: CanonicalCandle[] = [];
-  const ohlc15M: CanonicalCandle[] = [];
-  const ohlc5M: CanonicalCandle[] = [];
-
-  const wavePoints = [
-    { o: 1.082, h: 1.0855, l: 1.0815, c: 1.085 },
-    { o: 1.085, h: 1.087, l: 1.084, c: 1.0865 },
-    { o: 1.0865, h: 1.089, l: 1.0855, c: 1.0885 },
-    { o: 1.0885, h: 1.092, l: 1.0878, c: 1.0915 },
-    { o: 1.0915, h: 1.0935, l: 1.0895, c: 1.09 },
-    { o: 1.09, h: 1.0905, l: 1.086, c: 1.0868 },
-    { o: 1.0868, h: 1.088, l: 1.0845, c: 1.0852 },
-    { o: 1.0852, h: 1.0875, l: 1.0838, c: 1.087 },
-    { o: 1.087, h: 1.0905, l: 1.0865, c: 1.0898 },
-    { o: 1.0898, h: 1.094, l: 1.089, c: 1.0935 },
-    { o: 1.0935, h: 1.0965, l: 1.0925, c: 1.0958 },
-    { o: 1.0958, h: 1.098, l: 1.094, c: 1.0972 },
-    { o: 1.0972, h: 1.0995, l: 1.096, c: 1.0985 },
-    { o: 1.0985, h: 1.102, l: 1.0975, c: 1.101 },
-    { o: 1.101, h: 1.1015, l: 1.098, c: 1.0988 },
-    { o: 1.0988, h: 1.1, l: 1.097, c: 1.0992 },
-  ];
-
-  wavePoints.forEach((w, h) => {
-    const hTimestamp = baseTime + h * hourMs;
-    ohlc1H.push({
-      symbol: 'EUR_USD',
-      timeframe: '1H',
-      timestamp: hTimestamp,
-      isoTimestamp: new Date(hTimestamp).toISOString(),
-      open: w.o,
-      high: w.h,
-      low: w.l,
-      close: w.c,
-      volume: 1200 + h * 50,
-      isComplete: true,
-      source: CANONICAL_BROKER_ID,
-      spreadPips: 0.8,
-    });
-
-    for (let m15 = 0; m15 < 4; m15++) {
-      const m15Timestamp = hTimestamp + m15 * fifteenMs;
-      const progress = m15 / 4;
-      const m15Open = Number((w.o + (w.c - w.o) * progress).toFixed(5));
-      const m15Close = Number((w.o + (w.c - w.o) * ((m15 + 1) / 4)).toFixed(5));
-      const m15High = Number((Math.max(m15Open, m15Close) + 0.0006).toFixed(5));
-      const m15Low = Number((Math.min(m15Open, m15Close) - 0.0005).toFixed(5));
-
-      ohlc15M.push({
-        symbol: 'EUR_USD',
-        timeframe: '15M',
-        timestamp: m15Timestamp,
-        isoTimestamp: new Date(m15Timestamp).toISOString(),
-        open: m15Open,
-        high: m15High,
-        low: m15Low,
-        close: m15Close,
-        volume: 300 + m15 * 20,
-        isComplete: true,
-        source: CANONICAL_BROKER_ID,
-        spreadPips: 0.8,
-      });
-
-      for (let m5 = 0; m5 < 3; m5++) {
-        const m5Timestamp = m15Timestamp + m5 * fiveMs;
-        const subProgress = m5 / 3;
-        const m5Open = Number((m15Open + (m15Close - m15Open) * subProgress).toFixed(5));
-        const m5Close = Number((m15Open + (m15Close - m15Open) * ((m5 + 1) / 3)).toFixed(5));
-        const m5High = Number((Math.max(m5Open, m5Close) + 0.0003).toFixed(5));
-        const m5Low = Number((Math.min(m5Open, m5Close) - 0.0003).toFixed(5));
-
-        ohlc5M.push({
-          symbol: 'EUR_USD',
-          timeframe: '5M',
-          timestamp: m5Timestamp,
-          isoTimestamp: new Date(m5Timestamp).toISOString(),
-          open: m5Open,
-          high: m5High,
-          low: m5Low,
-          close: m5Close,
-          volume: 100 + m5 * 10,
-          isComplete: true,
-          source: CANONICAL_BROKER_ID,
-          spreadPips: 0.8,
-        });
-      }
-    }
-  });
-
-  (targetEngine.marketDataEngine as any).upsertCandles('EUR_USD', '1H', ohlc1H);
-  (targetEngine.marketDataEngine as any).upsertCandles('EUR_USD', '15M', ohlc15M);
-  (targetEngine.marketDataEngine as any).upsertCandles('EUR_USD', '5M', ohlc5M);
-
-  // Generate 1M execution baseline
-  const ohlc1M: CanonicalCandle[] = [];
-  const latest5M = ohlc5M[ohlc5M.length - 1];
-  for (let m1 = 0; m1 < 5; m1++) {
-    const m1Timestamp = latest5M.timestamp + m1 * oneMs;
-    ohlc1M.push({
-      symbol: 'EUR_USD',
-      timeframe: '1M',
-      timestamp: m1Timestamp,
-      isoTimestamp: new Date(m1Timestamp).toISOString(),
-      open: latest5M.open,
-      high: latest5M.high,
-      low: latest5M.low,
-      close: latest5M.close,
-      volume: 25,
-      isComplete: true,
-      source: CANONICAL_BROKER_ID,
-      spreadPips: 0.8,
-    });
-  }
-  (targetEngine.marketDataEngine as any).upsertCandles('EUR_USD', '1M', ohlc1M);
-
-  const initialTick: CanonicalTick = {
-    symbol: 'EUR_USD',
-    timestamp: Date.now(),
-    isoTimestamp: new Date().toISOString(),
-    bid: 1.09915,
-    ask: 1.09925,
-    mid: 1.0992,
-    spreadPips: 1.0,
-    source: CANONICAL_BROKER_ID,
-  };
-  targetEngine.marketDataEngine.ingestStreamingTick({
-    epoch: Math.floor(initialTick.timestamp / 1000),
-    quote: initialTick.mid,
-    bid: initialTick.bid,
-    ask: initialTick.ask,
-    symbol: 'frxEURUSD',
-  });
-}
-
-seedServerBaselineData(engine);
+const watchlistEngine = new WatchlistEngine(engine);
 
 // ============================================================================
 // SERVER-SENT EVENTS (SSE) FOR REAL-TIME CLIENT UPDATES
@@ -241,6 +102,17 @@ engine.healthEngine.subscribe((status, metrics) => {
   }
 });
 
+watchlistEngine.subscribe((watchlist) => {
+  const data = JSON.stringify({ type: 'watchlist', watchlist });
+  for (const client of sseClients) {
+    try {
+      client.write(`data: ${data}\n\n`);
+    } catch {
+      sseClients.delete(client);
+    }
+  }
+});
+
 // ============================================================================
 // REST API ROUTES (/api/*)
 // ============================================================================
@@ -254,6 +126,8 @@ app.get('/api/health', (req, res) => {
     hasToken: Boolean(process.env.DERIV_API_TOKEN),
     appId: derivAppId,
     serverTime: Date.now(),
+    lastCloseDetails: engine.derivAdapter.getLastCloseDetails(),
+    lastErrorDetails: engine.derivAdapter.getLastErrorDetails(),
   });
 });
 
@@ -401,6 +275,53 @@ app.post('/api/market/fetch-live', async (req, res) => {
   }
 });
 
+// 13. Filtered Browsable Catalog (Browse-only: 4 confirmed categories, no subscriptions)
+app.get(['/api/market/catalog', '/api/catalog'], async (req, res) => {
+  try {
+    const force = req.query.refresh === 'true';
+    const catalog = await DerivCatalogEngine.getCatalog(engine.derivAdapter, force);
+    res.json(catalog);
+  } catch (err: any) {
+    console.error('[Server] Error fetching catalog:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 14. Query Current Watchlist
+app.get(['/api/market/watchlist', '/api/watchlist'], (req, res) => {
+  res.json(watchlistEngine.getWatchlist());
+});
+
+// 15. Add Instrument to Watchlist (Multiplexed WebSocket + Staggered Backfill)
+app.post(['/api/market/watchlist/add', '/api/watchlist/add'], async (req, res) => {
+  const rawSymbol = req.body.symbol;
+  if (!rawSymbol) {
+    return res.status(400).json({ success: false, error: 'Symbol is required' });
+  }
+  try {
+    const entry = await watchlistEngine.addInstrument(rawSymbol);
+    res.json({ success: true, entry });
+  } catch (err: any) {
+    console.error(`[Server] Failed to add ${rawSymbol} to watchlist:`, err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 16. Remove Instrument from Watchlist (Unsubscribe + Full State Teardown)
+app.post(['/api/market/watchlist/remove', '/api/watchlist/remove'], async (req, res) => {
+  const rawSymbol = req.body.symbol;
+  if (!rawSymbol) {
+    return res.status(400).json({ success: false, error: 'Symbol is required' });
+  }
+  try {
+    const removed = await watchlistEngine.removeInstrument(rawSymbol);
+    res.json({ success: removed });
+  } catch (err: any) {
+    console.error(`[Server] Failed to remove ${rawSymbol} from watchlist:`, err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ============================================================================
 // VITE MIDDLEWARE & STATIC ASSET SERVING
 // ============================================================================
@@ -422,8 +343,18 @@ async function startServer() {
   }
 
   const PORT = 3000;
-  app.listen(PORT, '0.0.0.0', () => {
+  app.listen(PORT, '0.0.0.0', async () => {
     console.log(`[SMC Trading OS Server] Listening on http://0.0.0.0:${PORT}`);
+    try {
+      await DatabaseConnection.getInstance();
+      console.info('[Server] Managed PostgreSQL (Cloud SQL) database connection established & Section 6 schema verified.');
+    } catch (dbErr) {
+      console.error('[Server] Database initialization failed:', dbErr);
+    }
+    // Initialize watchlist asynchronously in background
+    watchlistEngine.initializeOnStartup(['frxEURUSD']).catch((err) => {
+      console.warn('[Server] Watchlist startup warning:', err);
+    });
   });
 }
 

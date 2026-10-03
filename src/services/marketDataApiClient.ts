@@ -15,6 +15,7 @@
 
 import {
   ActiveSafetyBlock,
+  CatalogInstrumentItem,
   DerivHealthMetrics,
   FeedStatus,
   InstrumentSymbol,
@@ -23,6 +24,7 @@ import {
   SymbolVerificationReport,
   Timeframe,
   DerivBackfillJobResult,
+  WatchlistEntry,
 } from '../types/smc';
 import {
   CanonicalCandle,
@@ -39,11 +41,12 @@ export interface MarketHealthResponse {
 }
 
 export interface StreamEvent {
-  readonly type: 'init' | 'tick' | 'candle' | 'health';
+  readonly type: 'init' | 'tick' | 'candle' | 'health' | 'watchlist';
   readonly status?: FeedStatus;
   readonly metrics?: DerivHealthMetrics;
   readonly tick?: CanonicalTick;
   readonly candle?: CanonicalCandle;
+  readonly watchlist?: readonly WatchlistEntry[];
   readonly serverTime?: number;
 }
 
@@ -226,6 +229,59 @@ export class MarketDataApiClient {
     });
     if (!res.ok) {
       throw new Error(`Failed to fetch live instrument: HTTP ${res.status}`);
+    }
+    return res.json();
+  }
+
+  /**
+   * Fetches the filtered browsable catalog across Forex, Commodities, Indices, and Crypto.
+   * Browse-only: does not trigger subscriptions or engine analysis.
+   */
+  public static async fetchCatalog(): Promise<readonly CatalogInstrumentItem[]> {
+    const res = await fetch('/api/market/catalog');
+    if (!res.ok) {
+      throw new Error(`Failed to fetch catalog: HTTP ${res.status}`);
+    }
+    return res.json();
+  }
+
+  /**
+   * Fetches the current watchlisted instruments.
+   */
+  public static async fetchWatchlist(): Promise<readonly WatchlistEntry[]> {
+    const res = await fetch('/api/market/watchlist');
+    if (!res.ok) {
+      throw new Error(`Failed to fetch watchlist: HTTP ${res.status}`);
+    }
+    return res.json();
+  }
+
+  /**
+   * Adds an instrument to the active watchlist (triggers multiplexed subscription & backfill).
+   */
+  public static async addToWatchlist(symbol: string): Promise<{ success: boolean; entry: WatchlistEntry }> {
+    const res = await fetch('/api/market/watchlist/add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbol }),
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to add to watchlist: HTTP ${res.status}`);
+    }
+    return res.json();
+  }
+
+  /**
+   * Removes an instrument from the active watchlist (unsubscribes and fully clears state).
+   */
+  public static async removeFromWatchlist(symbol: string): Promise<{ success: boolean }> {
+    const res = await fetch('/api/market/watchlist/remove', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbol }),
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to remove from watchlist: HTTP ${res.status}`);
     }
     return res.json();
   }

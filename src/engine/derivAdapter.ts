@@ -121,6 +121,22 @@ export type DerivStateChangeCallback = (
   error?: Error,
 ) => void;
 
+export interface DerivWebSocketCloseDetails {
+  readonly code: number;
+  readonly reason: string;
+  readonly wasClean: boolean;
+  readonly timestamp: number;
+}
+
+export interface DerivWebSocketErrorDetails {
+  readonly message: string;
+  readonly code?: string | number;
+  readonly httpStatus?: number;
+  readonly httpStatusText?: string;
+  readonly raw?: unknown;
+  readonly timestamp: number;
+}
+
 // ============================================================================
 // 2. DERIV WEBSOCKET CLIENT ADAPTER
 // ============================================================================
@@ -128,6 +144,8 @@ export type DerivStateChangeCallback = (
 export class DerivAdapter {
   private socket: WebSocket | null = null;
   private state: DerivConnectionState = 'DISCONNECTED';
+  private lastCloseDetails: DerivWebSocketCloseDetails | null = null;
+  private lastErrorDetails: DerivWebSocketErrorDetails | null = null;
   private reqIdCounter = 1;
   private readonly pendingRequests: Map<
     number,
@@ -145,8 +163,8 @@ export class DerivAdapter {
     {
       type: 'ticks' | 'candles';
       symbol: string;
-      tickCallback?: DerivTickCallback;
-      candleCallback?: DerivCandleCallback;
+      tickCallbacks: Set<DerivTickCallback>;
+      candleCallbacks: Set<DerivCandleCallback>;
     }
   > = new Map();
 
@@ -273,17 +291,69 @@ export class DerivAdapter {
           resolve();
         };
 
-        const onError = (ev: any) => {
-          const err = new Error(`Deriv WebSocket error on ${url}`);
+        const onUnexpectedResponse = (_req: unknown, res: any) => {
+          const status = res.statusCode;
+          const statusText = res.statusMessage || '';
+          const errMsg = `Deriv WebSocket handshake rejected: HTTP ${status} ${statusText} from ${url}`;
+          console.error(`[DerivAdapter] ${errMsg}`);
+          const err = new Error(errMsg);
+          this.lastErrorDetails = {
+            message: errMsg,
+            httpStatus: status,
+            httpStatusText: statusText,
+            timestamp: Date.now(),
+          };
           if (this.state === 'CONNECTING') {
             reject(err);
           }
           this.handleSocketFailure(err);
         };
 
-        const onClose = () => {
+        const onError = (ev: any) => {
+          const underlying =
+            ev?.error?.message ||
+            ev?.message ||
+            (typeof ev?.error === 'string' ? ev.error : null) ||
+            'Underlying transport failure';
+          const code = ev?.error?.code || ev?.code;
+          const errMsg = `Deriv WebSocket error on ${url}: ${underlying}${code ? ` [code: ${code}]` : ''}`;
+
+          console.error(`[DerivAdapter] ${errMsg}`, ev?.error || ev);
+
+          const err = new Error(errMsg);
+          this.lastErrorDetails = {
+            message: underlying,
+            code,
+            raw: ev?.error || ev,
+            timestamp: Date.now(),
+          };
+
+          if (this.state === 'CONNECTING') {
+            reject(err);
+          }
+          this.handleSocketFailure(err);
+        };
+
+        const onClose = (ev?: any) => {
+          const code = ev?.code ?? 1006;
+          const reasonStr =
+            typeof ev?.reason === 'string'
+              ? ev.reason
+              : ev?.reason?.toString?.() || '';
+          const wasClean = Boolean(ev?.wasClean);
+
+          this.lastCloseDetails = {
+            code,
+            reason: reasonStr,
+            wasClean,
+            timestamp: Date.now(),
+          };
+
+          const closeMsg = `Deriv WebSocket closed: code=${code}, reason="${reasonStr || '<none>'}", wasClean=${wasClean} on ${url}`;
+          console.error(`[DerivAdapter] ${closeMsg}`);
+
           if (!this.isManuallyClosed) {
-            this.handleSocketFailure(new Error('Deriv WebSocket closed unexpectedly'));
+            this.handleSocketFailure(new Error(closeMsg));
           } else {
             this.transitionState('DISCONNECTED');
           }
@@ -297,6 +367,9 @@ export class DerivAdapter {
         ws.onerror = onError;
         ws.onclose = onClose;
         ws.onmessage = onMessage;
+        if (typeof (ws as any).on === 'function') {
+          (ws as any).on('unexpected-response', onUnexpectedResponse);
+        }
       } catch (err) {
         this.transitionState('ERROR', err as Error);
         reject(err);
@@ -339,6 +412,14 @@ export class DerivAdapter {
 
   public getLastPongLatencyMs(): number | null {
     return this.lastPongLatencyMs;
+  }
+
+  public getLastCloseDetails(): DerivWebSocketCloseDetails | null {
+    return this.lastCloseDetails;
+  }
+
+  public getLastErrorDetails(): DerivWebSocketErrorDetails | null {
+    return this.lastErrorDetails;
   }
 
   public onStateChange(listener: DerivStateChangeCallback): () => void {
@@ -576,41 +657,105 @@ export class DerivAdapter {
 
   /**
    * Subscribes to live price ticks for a symbol.
+   * Handles idempotency and already subscribed errors automatically.
    */
   public async subscribeTicks(
     symbol: string,
     callback: DerivTickCallback,
   ): Promise<string> {
-    const res = await this.sendRequest<{
-      subscription?: { id: string };
-      tick?: DerivRawTick;
-      error?: { message: string; code: string };
-    }>({
-      ticks: symbol,
-      subscribe: 1,
-    });
-
-    if (res.error) {
-      throw new Error(`Deriv subscribeTicks failed for ${symbol}: ${res.error.message}`);
+    const key = `ticks:${symbol}`;
+    const existingSubId = this.symbolToSubscriptionId.get(key);
+    if (existingSubId) {
+      const handler = this.subscriptionHandlers.get(existingSubId);
+      if (handler) {
+        handler.tickCallbacks.add(callback);
+        return existingSubId;
+      }
     }
 
-    const subId = res.subscription?.id;
+    try {
+      const res = await this.sendRequest<{
+        subscription?: { id: string };
+        tick?: DerivRawTick;
+        error?: { message: string; code: string };
+      }>({
+        ticks: symbol,
+        subscribe: 1,
+      });
+
+      if (res.error) {
+        if (
+          res.error.code === 'AlreadySubscribed' ||
+          res.error.message?.includes('AlreadySubscribed') ||
+          res.error.message?.includes('already subscribed')
+        ) {
+          return this.handleAlreadySubscribedTicks(symbol, callback);
+        }
+        throw new Error(`Deriv subscribeTicks failed for ${symbol}: ${res.error.message}`);
+      }
+
+      const subId = res.subscription?.id;
+      if (!subId) {
+        throw new Error(`Deriv subscribeTicks response missing subscription ID for ${symbol}`);
+      }
+
+      let handler = this.subscriptionHandlers.get(subId);
+      if (!handler) {
+        handler = {
+          type: 'ticks',
+          symbol,
+          tickCallbacks: new Set([callback]),
+          candleCallbacks: new Set(),
+        };
+        this.subscriptionHandlers.set(subId, handler);
+      } else {
+        handler.tickCallbacks.add(callback);
+      }
+      this.symbolToSubscriptionId.set(key, subId);
+
+      // If an initial tick arrived in the response, deliver it
+      if (res.tick) {
+        try {
+          callback(res.tick);
+        } catch (err) {
+          console.error('[DerivAdapter] Initial tick callback error:', err);
+        }
+      }
+
+      return subId;
+    } catch (err: any) {
+      if (
+        err?.message?.includes('AlreadySubscribed') ||
+        err?.message?.includes('already subscribed')
+      ) {
+        return this.handleAlreadySubscribedTicks(symbol, callback);
+      }
+      throw err;
+    }
+  }
+
+  private handleAlreadySubscribedTicks(
+    symbol: string,
+    callback: DerivTickCallback,
+  ): string {
+    const key = `ticks:${symbol}`;
+    let subId = this.symbolToSubscriptionId.get(key);
     if (!subId) {
-      throw new Error(`Deriv subscribeTicks response missing subscription ID for ${symbol}`);
+      subId = `sub-ticks-${symbol}`;
+      this.symbolToSubscriptionId.set(key, subId);
     }
-
-    this.subscriptionHandlers.set(subId, {
-      type: 'ticks',
-      symbol,
-      tickCallback: callback,
-    });
-    this.symbolToSubscriptionId.set(`ticks:${symbol}`, subId);
-
-    // If an initial tick arrived in the response, deliver it
-    if (res.tick) {
-      callback(res.tick);
+    let handler = this.subscriptionHandlers.get(subId);
+    if (!handler) {
+      handler = {
+        type: 'ticks',
+        symbol,
+        tickCallbacks: new Set([callback]),
+        candleCallbacks: new Set(),
+      };
+      this.subscriptionHandlers.set(subId, handler);
+    } else {
+      handler.tickCallbacks.add(callback);
     }
-
     return subId;
   }
 
@@ -622,36 +767,96 @@ export class DerivAdapter {
     granularity: DerivGranularitySeconds,
     callback: DerivCandleCallback,
   ): Promise<string> {
-    const res = await this.sendRequest<{
-      subscription?: { id: string };
-      candles?: DerivRawCandle[];
-      ohlc?: DerivRawOhlcUpdate;
-      error?: { message: string; code: string };
-    }>({
-      ticks_history: symbol,
-      style: 'candles',
-      granularity,
-      end: 'latest',
-      count: 1,
-      subscribe: 1,
-    });
-
-    if (res.error) {
-      throw new Error(`Deriv subscribeCandles failed for ${symbol}: ${res.error.message}`);
+    const key = `candles:${symbol}:${granularity}`;
+    const existingSubId = this.symbolToSubscriptionId.get(key);
+    if (existingSubId) {
+      const handler = this.subscriptionHandlers.get(existingSubId);
+      if (handler) {
+        handler.candleCallbacks.add(callback);
+        return existingSubId;
+      }
     }
 
-    const subId = res.subscription?.id;
+    try {
+      const res = await this.sendRequest<{
+        subscription?: { id: string };
+        candles?: DerivRawCandle[];
+        ohlc?: DerivRawOhlcUpdate;
+        error?: { message: string; code: string };
+      }>({
+        ticks_history: symbol,
+        style: 'candles',
+        granularity,
+        end: 'latest',
+        count: 1,
+        subscribe: 1,
+      });
+
+      if (res.error) {
+        if (
+          res.error.code === 'AlreadySubscribed' ||
+          res.error.message?.includes('AlreadySubscribed') ||
+          res.error.message?.includes('already subscribed')
+        ) {
+          return this.handleAlreadySubscribedCandles(symbol, granularity, callback);
+        }
+        throw new Error(`Deriv subscribeCandles failed for ${symbol}: ${res.error.message}`);
+      }
+
+      const subId = res.subscription?.id;
+      if (!subId) {
+        throw new Error(`Deriv subscribeCandles response missing subscription ID for ${symbol}`);
+      }
+
+      let handler = this.subscriptionHandlers.get(subId);
+      if (!handler) {
+        handler = {
+          type: 'candles',
+          symbol,
+          tickCallbacks: new Set(),
+          candleCallbacks: new Set([callback]),
+        };
+        this.subscriptionHandlers.set(subId, handler);
+      } else {
+        handler.candleCallbacks.add(callback);
+      }
+      this.symbolToSubscriptionId.set(key, subId);
+
+      return subId;
+    } catch (err: any) {
+      if (
+        err?.message?.includes('AlreadySubscribed') ||
+        err?.message?.includes('already subscribed')
+      ) {
+        return this.handleAlreadySubscribedCandles(symbol, granularity, callback);
+      }
+      throw err;
+    }
+  }
+
+  private handleAlreadySubscribedCandles(
+    symbol: string,
+    granularity: DerivGranularitySeconds,
+    callback: DerivCandleCallback,
+  ): string {
+    const key = `candles:${symbol}:${granularity}`;
+    let subId = this.symbolToSubscriptionId.get(key);
     if (!subId) {
-      throw new Error(`Deriv subscribeCandles response missing subscription ID for ${symbol}`);
+      subId = `sub-candles-${symbol}-${granularity}`;
+      this.symbolToSubscriptionId.set(key, subId);
     }
-
-    this.subscriptionHandlers.set(subId, {
-      type: 'candles',
-      symbol,
-      candleCallback: callback,
-    });
-    this.symbolToSubscriptionId.set(`candles:${symbol}:${granularity}`, subId);
-
+    let handler = this.subscriptionHandlers.get(subId);
+    if (!handler) {
+      handler = {
+        type: 'candles',
+        symbol,
+        tickCallbacks: new Set(),
+        candleCallbacks: new Set([callback]),
+      };
+      this.subscriptionHandlers.set(subId, handler);
+    } else {
+      handler.candleCallbacks.add(callback);
+    }
     return subId;
   }
 
@@ -661,13 +866,22 @@ export class DerivAdapter {
   public async forget(subscriptionId: string): Promise<boolean> {
     const handler = this.subscriptionHandlers.get(subscriptionId);
     if (!handler) {
+      if (this.socket && this.socket.readyState === WebSocket.OPEN && !subscriptionId.startsWith('sub-')) {
+        try {
+          await this.sendRequest({ forget: subscriptionId });
+        } catch {
+          // Ignore
+        }
+      }
       return true;
     }
 
     try {
-      await this.sendRequest({
-        forget: subscriptionId,
-      });
+      if (!subscriptionId.startsWith('sub-') && this.socket && this.socket.readyState === WebSocket.OPEN) {
+        await this.sendRequest({
+          forget: subscriptionId,
+        });
+      }
     } catch {
       // Ignore forget errors during teardown
     } finally {
@@ -746,18 +960,35 @@ export class DerivAdapter {
       // 3. Handle Live Stream Ticks
       if (msg.msg_type === 'tick' && msg.tick) {
         const rawTick = msg.tick as DerivRawTick;
-        // Search matching subscription handler
         const subId = (msg.subscription as { id: string } | undefined)?.id;
+        const delivered = new Set<DerivTickCallback>();
+
         if (subId) {
           const handler = this.subscriptionHandlers.get(subId);
-          if (handler && handler.tickCallback) {
-            handler.tickCallback(rawTick);
+          if (handler && handler.tickCallbacks) {
+            for (const cb of handler.tickCallbacks) {
+              delivered.add(cb);
+              try {
+                cb(rawTick);
+              } catch (err) {
+                console.error('[DerivAdapter] Tick callback error:', err);
+              }
+            }
           }
-        } else {
-          // Fallback to symbol match
-          for (const handler of this.subscriptionHandlers.values()) {
-            if (handler.type === 'ticks' && handler.symbol === rawTick.symbol && handler.tickCallback) {
-              handler.tickCallback(rawTick);
+        }
+
+        // Also deliver to any handler matching rawTick.symbol
+        for (const handler of this.subscriptionHandlers.values()) {
+          if (handler.type === 'ticks' && handler.symbol === rawTick.symbol && handler.tickCallbacks) {
+            for (const cb of handler.tickCallbacks) {
+              if (!delivered.has(cb)) {
+                delivered.add(cb);
+                try {
+                  cb(rawTick);
+                } catch (err) {
+                  console.error('[DerivAdapter] Tick callback error:', err);
+                }
+              }
             }
           }
         }
@@ -775,15 +1006,33 @@ export class DerivAdapter {
         };
 
         const subId = (msg.subscription as { id: string } | undefined)?.id;
+        const delivered = new Set<DerivCandleCallback>();
+
         if (subId) {
           const handler = this.subscriptionHandlers.get(subId);
-          if (handler && handler.candleCallback) {
-            handler.candleCallback(candle, ohlc.symbol);
+          if (handler && handler.candleCallbacks) {
+            for (const cb of handler.candleCallbacks) {
+              delivered.add(cb);
+              try {
+                cb(candle, ohlc.symbol);
+              } catch (err) {
+                console.error('[DerivAdapter] Candle callback error:', err);
+              }
+            }
           }
-        } else {
-          for (const handler of this.subscriptionHandlers.values()) {
-            if (handler.type === 'candles' && handler.symbol === ohlc.symbol && handler.candleCallback) {
-              handler.candleCallback(candle, ohlc.symbol);
+        }
+
+        for (const handler of this.subscriptionHandlers.values()) {
+          if (handler.type === 'candles' && handler.symbol === ohlc.symbol && handler.candleCallbacks) {
+            for (const cb of handler.candleCallbacks) {
+              if (!delivered.has(cb)) {
+                delivered.add(cb);
+                try {
+                  cb(candle, ohlc.symbol);
+                } catch (err) {
+                  console.error('[DerivAdapter] Candle callback error:', err);
+                }
+              }
             }
           }
         }

@@ -159,6 +159,22 @@ export const SmcLiquidityPoiWorkbench: React.FC<SmcLiquidityPoiWorkbenchProps> =
     );
   }
 
+  // Explicit "Connecting to Deriv..." State when real candles have not arrived yet
+  if (!structureAnalysis || currentPrice === 0) {
+    return (
+      <div className="p-8 rounded-xl bg-slate-900/60 border border-slate-800 text-center space-y-4">
+        <div className="flex items-center justify-center gap-2 text-cyan-400 font-bold text-sm">
+          <Activity className="h-5 w-5 animate-spin" />
+          <span>Connecting to Deriv...</span>
+        </div>
+        <p className="text-xs text-slate-400 max-w-md mx-auto">
+          Awaiting real canonical market candles for <span className="font-mono font-bold text-white">{symbol}</span> ({timeframe}) from the server-side Deriv WebSocket pipeline.
+          Zero synthetic or fixture data is loaded by design.
+        </p>
+      </div>
+    );
+  }
+
   const activeChain =
     causalityReport?.causalChains.find((c) => c.id === selectedChainId) ??
     causalityReport?.latestActiveChain ??

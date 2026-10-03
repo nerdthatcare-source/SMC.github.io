@@ -109,10 +109,12 @@ export type AssetClass =
   | 'FOREX_MAJOR'
   | 'FOREX_MINOR'
   | 'INDEX'
-  | 'COMMODITY_METAL';
+  | 'COMMODITY_METAL'
+  | 'CRYPTOCURRENCY';
 
 /**
- * The 26 canonical approved instrument symbols.
+ * The canonical approved instrument symbols matching Deriv's real 43-symbol catalog
+ * (25 forex, 4 metals, 12 indices, 2 crypto) plus standard aliases.
  * Format adheres to canonical instrument naming convention (BASE_QUOTE).
  */
 export type InstrumentSymbol =
@@ -124,7 +126,7 @@ export type InstrumentSymbol =
   | 'AUD_USD'
   | 'USD_CAD'
   | 'NZD_USD'
-  // 11 Forex Minors / Crosses
+  // 18 Forex Minors & Crosses (Total 25 Forex from Deriv catalog)
   | 'EUR_GBP'
   | 'EUR_JPY'
   | 'GBP_JPY'
@@ -133,19 +135,37 @@ export type InstrumentSymbol =
   | 'GBP_AUD'
   | 'EUR_CAD'
   | 'GBP_CAD'
-  | 'CAD_JPY'
   | 'NZD_JPY'
   | 'AUD_CAD'
-  // 5 Key Global Indices
-  | 'US30_USD'
-  | 'SPX500_USD'
-  | 'NAS100_USD'
-  | 'DE30_EUR'
-  | 'UK100_GBP'
-  // 3 Precious Metals
+  | 'AUD_CHF'
+  | 'AUD_NZD'
+  | 'EUR_CHF'
+  | 'EUR_NZD'
+  | 'GBP_CHF'
+  | 'GBP_NZD'
+  | 'USD_MXN'
+  | 'USD_PLN'
+  // 4 Precious Metals (Commodities)
   | 'XAU_USD'
   | 'XAG_USD'
-  | 'XPT_USD';
+  | 'XPT_USD'
+  | 'XPD_USD'
+  // 12 Real Deriv Equity Indices
+  | 'OTC_DJI'
+  | 'OTC_SPC'
+  | 'OTC_NDX'
+  | 'OTC_FTSE'
+  | 'OTC_GDAXI'
+  | 'OTC_FCHI'
+  | 'OTC_SX5E'
+  | 'OTC_N225'
+  | 'OTC_AS51'
+  | 'OTC_HSI'
+  | 'OTC_AEX'
+  | 'OTC_SSMI'
+  // 2 Cryptocurrencies
+  | 'BTC_USD'
+  | 'ETH_USD';
 
 // ============================================================================
 // 4. CANDLE & TICK CORE MODELS
@@ -497,6 +517,10 @@ export interface DerivActiveSymbol {
   readonly symbol_type: string;
   readonly is_trading_suspended?: 0 | 1;
   readonly pip?: number;
+  readonly underlying_symbol?: string;
+  readonly underlying_symbol_name?: string;
+  readonly subgroup?: string;
+  readonly exchange_is_open?: 0 | 1;
 }
 
 export type DerivConnectionState =
@@ -604,4 +628,44 @@ export interface DerivBackfillJobResult {
   readonly candlesRecovered: number;
   readonly durationMs: number;
   readonly error?: string;
+}
+
+export type CatalogMarketCategory =
+  | 'forex'
+  | 'commodities'
+  | 'indices'
+  | 'cryptocurrency';
+
+export interface CatalogTradingTimesInfo {
+  readonly openTimes: readonly string[];
+  readonly closeTimes: readonly string[];
+  readonly settlementTime?: string;
+  readonly tradingDays: readonly string[];
+  readonly events: ReadonlyArray<{ dates: string; descrip: string }>;
+}
+
+export interface CatalogInstrumentItem {
+  readonly underlyingSymbol: string;
+  readonly displayName: string;
+  readonly category: CatalogMarketCategory;
+  readonly submarket: string;
+  readonly pipSize: number;
+  readonly exchangeIsOpen: boolean;
+  readonly isTradingSuspended: boolean;
+  readonly tradingTimes: CatalogTradingTimesInfo | null;
+  readonly isMarketOpenNow: boolean;
+  readonly statusDescription: string;
+}
+
+export interface WatchlistEntry {
+  readonly symbol: string;
+  readonly canonicalSymbol: string;
+  readonly derivSymbol: string;
+  readonly displayName: string;
+  readonly category: string;
+  readonly subscriptionId: string | null;
+  readonly status: 'INITIALIZING' | 'ACTIVE' | 'ERROR';
+  readonly addedAt: number;
+  readonly lastBackfillAt?: number;
+  readonly isStreaming: boolean;
 }

@@ -10,18 +10,26 @@
     "start": "node server.ts",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx src/tests/smcMultiTimeframeIntegration.test.ts && tsx src/tests/derivMarketDataLayer.test.ts"
+    "test": "tsx src/tests/smcMultiTimeframeIntegration.test.ts && tsx src/tests/derivMarketDataLayer.test.ts && tsx src/tests/watchlistAndIsolation.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
     "@tailwindcss/vite": "^4.3.3",
+    "@types/pg": "^8.23.1",
+    "@types/sql.js": "^1.4.11",
     "@vitejs/plugin-react": "^6.1.1",
     "dotenv": "^17.2.3",
+    "drizzle-kit": "^0.31.11",
+    "drizzle-orm": "^0.45.3",
     "express": "^4.21.2",
+    "firebase": "^12.19.0",
+    "firebase-admin": "^14.5.0",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
+    "pg": "^8.23.1",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
+    "sql.js": "^1.14.2",
     "vite": "^8.3.0",
     "ws": "^8.22.0"
   },

@@ -154,8 +154,16 @@ export class CanonicalDataEngine {
           }
         });
         this.activeTickSubscriptions.set(symbol, subId);
-      } catch (subErr) {
-        console.warn(`[CanonicalDataEngine] Failed to subscribe ticks for ${symbol}:`, subErr);
+      } catch (subErr: any) {
+        if (
+          subErr?.message &&
+          /already\s*subscribed/i.test(subErr.message)
+        ) {
+          const subId = `sub-ticks-${derivSymbol}`;
+          this.activeTickSubscriptions.set(symbol, subId);
+        } else {
+          console.warn(`[CanonicalDataEngine] Failed to subscribe ticks for ${symbol}:`, subErr);
+        }
       }
     }
   }
@@ -170,6 +178,18 @@ export class CanonicalDataEngine {
     }
     this.activeTickSubscriptions.clear();
     this.derivAdapter.disconnect();
+  }
+
+  public isSymbolStreaming(symbol: InstrumentSymbol): boolean {
+    return this.activeTickSubscriptions.has(symbol);
+  }
+
+  public registerActiveTickSubscription(symbol: InstrumentSymbol, subId: string): void {
+    this.activeTickSubscriptions.set(symbol, subId);
+  }
+
+  public unregisterActiveTickSubscription(symbol: InstrumentSymbol): void {
+    this.activeTickSubscriptions.delete(symbol);
   }
 
   public getFeedStatus(): FeedStatus {

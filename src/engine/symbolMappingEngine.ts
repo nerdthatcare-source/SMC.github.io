@@ -5,7 +5,7 @@
  * Symbol Mapping Engine
  *
  * Normalizes instrument identifiers across external platforms, broker conventions,
- * and canonical DERIV formats (frx-prefixed for forex/metals) for all 26 approved instruments.
+ * and canonical DERIV formats (frx-prefixed for forex/metals) for all approved catalog instruments.
  *
  * Implements active_symbols verification against Deriv's live catalog.
  */
@@ -62,7 +62,7 @@ export class SymbolMappingEngine {
     AUD_USD: 'frxAUDUSD',
     USD_CAD: 'frxUSDCAD',
     NZD_USD: 'frxNZDUSD',
-    // 11 Forex Minors
+    // 18 Forex Minors & Crosses
     EUR_GBP: 'frxEURGBP',
     EUR_JPY: 'frxEURJPY',
     GBP_JPY: 'frxGBPJPY',
@@ -71,19 +71,37 @@ export class SymbolMappingEngine {
     GBP_AUD: 'frxGBPAUD',
     EUR_CAD: 'frxEURCAD',
     GBP_CAD: 'frxGBPCAD',
-    CAD_JPY: 'frxCADJPY',
     NZD_JPY: 'frxNZDJPY',
     AUD_CAD: 'frxAUDCAD',
-    // 5 Equity Indices
-    US30_USD: 'OTC_DJI',
-    SPX500_USD: 'OTC_SPC',
-    NAS100_USD: 'OTC_NDX',
-    DE30_EUR: 'OTC_GDAXI',
-    UK100_GBP: 'OTC_FTSE',
-    // 3 Commodities / Metals
+    AUD_CHF: 'frxAUDCHF',
+    AUD_NZD: 'frxAUDNZD',
+    EUR_CHF: 'frxEURCHF',
+    EUR_NZD: 'frxEURNZD',
+    GBP_CHF: 'frxGBPCHF',
+    GBP_NZD: 'frxGBPNZD',
+    USD_MXN: 'frxUSDMXN',
+    USD_PLN: 'frxUSDPLN',
+    // 4 Precious Metals (Commodities)
     XAU_USD: 'frxXAUUSD',
     XAG_USD: 'frxXAGUSD',
     XPT_USD: 'frxXPTUSD',
+    XPD_USD: 'frxXPDUSD',
+    // 12 Real Deriv Equity Indices
+    OTC_DJI: 'OTC_DJI',
+    OTC_SPC: 'OTC_SPC',
+    OTC_NDX: 'OTC_NDX',
+    OTC_FTSE: 'OTC_FTSE',
+    OTC_GDAXI: 'OTC_GDAXI',
+    OTC_FCHI: 'OTC_FCHI',
+    OTC_SX5E: 'OTC_SX5E',
+    OTC_N225: 'OTC_N225',
+    OTC_AS51: 'OTC_AS51',
+    OTC_HSI: 'OTC_HSI',
+    OTC_AEX: 'OTC_AEX',
+    OTC_SSMI: 'OTC_SSMI',
+    // 2 Cryptocurrencies
+    BTC_USD: 'cryBTCUSD',
+    ETH_USD: 'cryETHUSD',
   };
 
   // Fast reverse lookup map: any standardized input -> Canonical InstrumentSymbol
@@ -125,18 +143,28 @@ export class SymbolMappingEngine {
   /**
    * Translates a canonical InstrumentSymbol into Deriv's frx-prefixed (or OTC index) name.
    */
-  public static toDerivSymbol(symbol: InstrumentSymbol): string {
-    const derivSymbol = this.CANONICAL_TO_DERIV_MAP[symbol];
+  public static toDerivSymbol(symbol: InstrumentSymbol | string): string {
+    const derivSymbol = this.CANONICAL_TO_DERIV_MAP[symbol as InstrumentSymbol];
     if (derivSymbol) {
       return derivSymbol;
     }
+    // If it's already in Deriv format (e.g. frxEURUSD, cryBTCUSD, OTC_DJI)
+    if (
+      symbol.startsWith('frx') ||
+      symbol.startsWith('cry') ||
+      symbol.startsWith('OTC_')
+    ) {
+      return symbol;
+    }
+    if (symbol === 'BTC_USD') return 'cryBTCUSD';
+    if (symbol === 'ETH_USD') return 'cryETHUSD';
+    if (symbol === 'XPD_USD') return 'frxXPDUSD';
     const clean = symbol.replace('_', '');
     return `frx${clean}`;
   }
 
   /**
    * Resolves any broker symbol string into the strict canonical InstrumentSymbol.
-   * Throws if the symbol cannot be mapped to one of the 26 approved instruments.
    */
   public static toCanonicalSymbol(rawSymbol: string): InstrumentSymbol {
     if (!rawSymbol || typeof rawSymbol !== 'string') {
@@ -146,14 +174,32 @@ export class SymbolMappingEngine {
     const normalized = rawSymbol.trim().toUpperCase();
     const match = this.aliasToCanonicalMap.get(normalized);
 
-    if (!match) {
-      throw new Error(
-        `SymbolMappingError: Unrecognized or unapproved instrument "${rawSymbol}". ` +
-          `Must map to one of the 26 canonical instruments.`,
-      );
+    if (match) {
+      return match;
     }
 
-    return match;
+    // Extended catalog symbols
+    if (normalized === 'CRYBTCUSD' || normalized === 'BTCUSD' || normalized === 'BTC_USD') return 'BTC_USD' as InstrumentSymbol;
+    if (normalized === 'CRYETHUSD' || normalized === 'ETHUSD' || normalized === 'ETH_USD') return 'ETH_USD' as InstrumentSymbol;
+    if (normalized === 'FRXXPDUSD' || normalized === 'XPDUSD' || normalized === 'XPD_USD') return 'XPD_USD' as InstrumentSymbol;
+
+    if (normalized.startsWith('FRX') && normalized.length === 9) {
+      const pair = normalized.slice(3);
+      return `${pair.slice(0, 3)}_${pair.slice(3)}` as InstrumentSymbol;
+    }
+
+    if (normalized.startsWith('OTC_')) {
+      return normalized as InstrumentSymbol;
+    }
+
+    // If already in BASE_QUOTE format, return it
+    if (rawSymbol.includes('_')) {
+      return rawSymbol as InstrumentSymbol;
+    }
+
+    throw new Error(
+      `SymbolMappingError: Unrecognized or unapproved instrument "${rawSymbol}".`,
+    );
   }
 
   /**
@@ -168,7 +214,7 @@ export class SymbolMappingEngine {
   }
 
   /**
-   * Verifies each of the 26 canonical instruments against Deriv's active_symbols
+   * Verifies each of the approved canonical instruments against Deriv's active_symbols
    * list and reports any that Deriv does not offer, rather than guessing.
    */
   public static verifyAgainstActiveSymbols(
@@ -252,7 +298,7 @@ export class SymbolMappingEngine {
   }
 
   /**
-   * Type guard to check if a symbol is one of the 26 approved instruments.
+   * Type guard to check if a symbol is one of the approved instruments.
    */
   public static isApprovedSymbol(symbol: string): symbol is InstrumentSymbol {
     return this.aliasToCanonicalMap.has(symbol.trim().toUpperCase());

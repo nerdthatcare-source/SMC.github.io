@@ -399,6 +399,17 @@ export class CanonicalMarketDataEngine {
     return () => this.tickListeners.delete(listener);
   }
 
+  /**
+   * Fully clears all in-memory candle series and latest tick for a specific symbol.
+   */
+  public clearSymbol(symbol: string): void {
+    for (const tf of ['1H', '15M', '5M', '1M'] as Timeframe[]) {
+      this.candleStore.delete(this.getSeriesKey(symbol as InstrumentSymbol, tf));
+      this.candleStore.delete(`${symbol}:${tf}`);
+    }
+    this.latestTicks.delete(symbol as InstrumentSymbol);
+  }
+
   public clearAll(): void {
     this.candleStore.clear();
     this.latestTicks.clear();

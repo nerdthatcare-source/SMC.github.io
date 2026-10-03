@@ -107,7 +107,7 @@ export type CanonicalValidationResult<T> =
 // 2. APPROVED INSTRUMENTS SET FOR RUNTIME LOOKUP
 // ============================================================================
 
-export const APPROVED_INSTRUMENT_SET: ReadonlySet<string> = new Set<InstrumentSymbol>([
+export const APPROVED_INSTRUMENT_SET: ReadonlySet<string> = new Set<string>([
   // 7 Forex Majors
   'EUR_USD',
   'GBP_USD',
@@ -116,7 +116,7 @@ export const APPROVED_INSTRUMENT_SET: ReadonlySet<string> = new Set<InstrumentSy
   'AUD_USD',
   'USD_CAD',
   'NZD_USD',
-  // 11 Forex Minors
+  // 18 Forex Minors & Crosses (Total 25 Forex from Deriv catalog)
   'EUR_GBP',
   'EUR_JPY',
   'GBP_JPY',
@@ -125,19 +125,37 @@ export const APPROVED_INSTRUMENT_SET: ReadonlySet<string> = new Set<InstrumentSy
   'GBP_AUD',
   'EUR_CAD',
   'GBP_CAD',
-  'CAD_JPY',
   'NZD_JPY',
   'AUD_CAD',
-  // 5 Key Indices
-  'US30_USD',
-  'SPX500_USD',
-  'NAS100_USD',
-  'DE30_EUR',
-  'UK100_GBP',
-  // 3 Precious Metals
+  'AUD_CHF',
+  'AUD_NZD',
+  'EUR_CHF',
+  'EUR_NZD',
+  'GBP_CHF',
+  'GBP_NZD',
+  'USD_MXN',
+  'USD_PLN',
+  // 4 Precious Metals (Commodities)
   'XAU_USD',
   'XAG_USD',
   'XPT_USD',
+  'XPD_USD',
+  // 12 Real Deriv Equity Indices
+  'OTC_DJI',
+  'OTC_SPC',
+  'OTC_NDX',
+  'OTC_FTSE',
+  'OTC_GDAXI',
+  'OTC_FCHI',
+  'OTC_SX5E',
+  'OTC_N225',
+  'OTC_AS51',
+  'OTC_HSI',
+  'OTC_AEX',
+  'OTC_SSMI',
+  // 2 Cryptocurrencies
+  'BTC_USD',
+  'ETH_USD',
 ]);
 
 const VALID_TIMEFRAMES: ReadonlySet<string> = new Set<Timeframe>([
@@ -161,7 +179,7 @@ const MAX_FUTURE_DRIFT_MS = 60_000;
  * - Must be non-null object.
  * - Source must strictly equal "DERIV".
  * - Must reject any synthetic/mock markers.
- * - Symbol must be in approved 26 instrument registry.
+ * - Symbol must be in approved instrument catalog (43-symbol Deriv catalog plus aliases).
  * - Timeframe must be "1H" | "15M" | "5M" | "1M".
  * - Timestamp must be a valid epoch and not drift into the future.
  * - OHLC must be finite numbers > 0.
@@ -225,7 +243,7 @@ export function validateCanonicalCandle(
     errors.push({
       code: 'UNAPPROVED_INSTRUMENT',
       field: 'symbol',
-      message: `Symbol "${String(raw.symbol)}" is not in the approved 26 canonical instruments list.`,
+      message: `Symbol "${String(raw.symbol)}" is not in the approved canonical instruments catalog (${APPROVED_INSTRUMENT_SET.size} instruments).`,
       receivedValue: raw.symbol,
     });
   }
@@ -444,7 +462,7 @@ export function validateCanonicalTick(
     errors.push({
       code: 'UNAPPROVED_INSTRUMENT',
       field: 'symbol',
-      message: `Tick symbol "${String(raw.symbol)}" is not in the approved 26 canonical instruments.`,
+      message: `Tick symbol "${String(raw.symbol)}" is not in the approved canonical instruments catalog (${APPROVED_INSTRUMENT_SET.size} instruments).`,
       receivedValue: raw.symbol,
     });
   }
