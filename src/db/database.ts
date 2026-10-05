@@ -32,8 +32,15 @@ export interface UserRecord {
   readonly email: string;
   readonly passwordHash: string | null;
   readonly fullName: string | null;
+  readonly role: 'USER' | 'SUPPORT' | 'ADMIN' | 'OWNER';
   readonly tier: 'FREE' | 'TRADER' | 'INSTITUTIONAL';
   readonly status: 'ACTIVE' | 'SUSPENDED' | 'PENDING';
+  readonly emailVerified: number;
+  readonly twoFactorSecret: string | null;
+  readonly twoFactorEnabled: number;
+  readonly verificationToken: string | null;
+  readonly resetToken: string | null;
+  readonly resetTokenExpiresAt: number | null;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
@@ -311,6 +318,7 @@ export class DatabaseConnection {
   private async seedInstrumentsMaster(): Promise<void> {
     const now = Date.now();
     for (const inst of APPROVED_INSTRUMENTS_LIST) {
+      if ((pool as any).ending || (pool as any).ended) return;
       try {
         await pool.query(
           `INSERT INTO instruments_master (
@@ -507,6 +515,7 @@ export class DatabaseConnection {
     userId?: string,
     ipAddress?: string,
   ): void {
+    if ((pool as any).ending || (pool as any).ended) return;
     const id = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     pool
       .query(

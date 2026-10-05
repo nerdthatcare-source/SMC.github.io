@@ -159,6 +159,7 @@ import {
   CausalityAnalysisReport,
 } from './engine/smcCausalityEngine';
 import { SmcLiquidityPoiWorkbench } from './components/SmcLiquidityPoiWorkbench';
+import { OwnerAdminUserManagement } from './components/OwnerAdminUserManagement';
 
 type ActiveTab =
   | 'liquidity_poi'
@@ -168,7 +169,8 @@ type ActiveTab =
   | 'integrity'
   | 'lineage'
   | 'instruments'
-  | 'architecture';
+  | 'architecture'
+  | 'owner_admin';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('liquidity_poi');
@@ -962,6 +964,18 @@ export default function App() {
             >
               <Cpu className="h-3.5 w-3.5" />
               Registry ({SYSTEM_MODULES_LIST.length})
+            </button>
+
+            <button
+              onClick={() => setActiveTab('owner_admin')}
+              className={`px-3 py-1.5 rounded-md font-medium transition-colors flex items-center gap-1.5 ${
+                activeTab === 'owner_admin'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+              }`}
+            >
+              <ShieldCheck className="h-3.5 w-3.5 text-indigo-400" />
+              Owner Admin
             </button>
           </nav>
         </div>
@@ -2584,6 +2598,13 @@ export default function App() {
                 </div>
               ))}
             </div>
+          </div>
+        )}
+
+        {/* Tab 9: OWNER-Only Admin & User Provisioning */}
+        {activeTab === 'owner_admin' && (
+          <div className="space-y-6">
+            <OwnerAdminUserManagement />
           </div>
         )}
       </main>

@@ -75,13 +75,18 @@ export type EngineModuleId =
   | 'SMC_1H_STRUCTURAL_ENGINE'
   // Layer 4: Setup Confluence Synthesis
   | 'CONFLUENCE_SCORE_EVALUATOR'
+  | 'CONFLUENCE_ENGINE'
   | 'SETUP_GENERATOR'
+  | 'ENTRY_ENGINE'
   | 'SMC_15M_SETUP_ENGINE'
   | 'SMC_5M_EXECUTION_ENGINE'
   | 'SMC_MULTI_TIMEFRAME_ENGINE'
   | 'SMC_RULE_ENGINE'
   // Layer 5: Risk & Execution Governance
   | 'RISK_GOVERNOR'
+  | 'STRUCTURAL_STOP_LOSS_ENGINE'
+  | 'STRUCTURAL_TAKE_PROFIT_ENGINE'
+  | 'RISK_REWARD_TRADE_QUALITY_ENGINE'
   | 'EXECUTION_APPROVAL_ROUTER'
   | 'ORDER_LIFECYCLE_MANAGER'
   // Layer 6: Simulation, Persistence & Audit
@@ -604,6 +609,27 @@ export const SYSTEM_ARCHITECTURE_REGISTRY: Readonly<
     enforcesHardRules: ['HARD_RULE_3_FIXED_TIMEFRAME_HIERARCHY'],
   },
 
+  CONFLUENCE_ENGINE: {
+    id: 'CONFLUENCE_ENGINE',
+    name: 'Confluence Engine',
+    layer: 'SETUP_CONFLUENCE_SYNTHESIS',
+    engineStatus: 'BUILT',
+    description:
+      'Evaluates multi-factor confluence matrix across 1H bias, 15M POI conviction grades, 5M triggers, liquidity sweeps, and candlestick/displacement patterns, firing setups above MIN_CONFLUENCE_SCORE (75).',
+    dependencies: [
+      'SMC_1H_STRUCTURAL_ENGINE',
+      'SMC_15M_SETUP_ENGINE',
+      'SMC_5M_EXECUTION_ENGINE',
+      'SMC_POI_INTELLIGENCE_ENGINE',
+    ],
+    enforcesHardRules: [
+      'HARD_RULE_1_CANONICAL_DATA_SOURCE',
+      'HARD_RULE_2_NO_SYNTHETIC_DATA',
+      'HARD_RULE_3_FIXED_TIMEFRAME_HIERARCHY',
+      'HARD_RULE_4_EXECUTION_TIMEFRAME_ISOLATION',
+    ],
+  },
+
   SETUP_GENERATOR: {
     id: 'SETUP_GENERATOR',
     name: 'SMC Setup Generator',
@@ -612,6 +638,17 @@ export const SYSTEM_ARCHITECTURE_REGISTRY: Readonly<
       'Constructs actionable SMCTradeSetup candidates with strict entry, invalidation stop-loss, and multi-tier take-profit targets.',
     dependencies: ['CONFLUENCE_SCORE_EVALUATOR'],
     enforcesHardRules: [],
+  },
+
+  ENTRY_ENGINE: {
+    id: 'ENTRY_ENGINE',
+    name: 'Structural Entry Engine',
+    layer: 'SETUP_CONFLUENCE_SYNTHESIS',
+    engineStatus: 'BUILT',
+    description:
+      'Generates precise entry prices anchored to 50% CE of FVGs, proximal edges of Order Blocks, or liquidity sweep retest levels with typed justifying POI contracts.',
+    dependencies: ['CONFLUENCE_ENGINE', 'ORDER_BLOCK_ENGINE', 'FAIR_VALUE_GAP_ENGINE'],
+    enforcesHardRules: ['HARD_RULE_3_FIXED_TIMEFRAME_HIERARCHY'],
   },
 
   SMC_15M_SETUP_ENGINE: {
@@ -696,6 +733,43 @@ export const SYSTEM_ARCHITECTURE_REGISTRY: Readonly<
     description:
       'Enforces strict 1% risk per trade, 3% daily loss circuit breakers, max concurrent exposures, and minimum 2.5R reward ratio.',
     dependencies: ['SETUP_GENERATOR', 'INSTRUMENT_MARKET_REGISTRY'],
+    enforcesHardRules: [],
+  },
+
+  STRUCTURAL_STOP_LOSS_ENGINE: {
+    id: 'STRUCTURAL_STOP_LOSS_ENGINE',
+    name: 'Structural Stop Loss Engine',
+    layer: 'RISK_AND_EXECUTION_GOVERNANCE',
+    engineStatus: 'BUILT',
+    description:
+      'Calculates protective structural stop-loss prices beyond invalidating swing points or order block distal edges plus calibrated buffers for all 43 catalog symbols.',
+    dependencies: ['ENTRY_ENGINE', 'INSTRUMENT_MARKET_REGISTRY', 'SWING_STRUCTURE_ENGINE'],
+    enforcesHardRules: ['HARD_RULE_3_FIXED_TIMEFRAME_HIERARCHY'],
+  },
+
+  STRUCTURAL_TAKE_PROFIT_ENGINE: {
+    id: 'STRUCTURAL_TAKE_PROFIT_ENGINE',
+    name: 'Structural Take Profit Engine',
+    layer: 'RISK_AND_EXECUTION_GOVERNANCE',
+    engineStatus: 'BUILT',
+    description:
+      'Computes multi-tier take-profit levels (TP1, TP2, TP3) anchored to opposing internal and external liquidity pools and swing points in the trade direction.',
+    dependencies: ['ENTRY_ENGINE', 'LIQUIDITY_ENGINE', 'SMC_DEALING_RANGE_ENGINE'],
+    enforcesHardRules: ['HARD_RULE_3_FIXED_TIMEFRAME_HIERARCHY'],
+  },
+
+  RISK_REWARD_TRADE_QUALITY_ENGINE: {
+    id: 'RISK_REWARD_TRADE_QUALITY_ENGINE',
+    name: 'Risk-to-Reward Trade Quality Engine',
+    layer: 'RISK_AND_EXECUTION_GOVERNANCE',
+    engineStatus: 'BUILT',
+    description:
+      'Computes actual R:R from entry/SL/TP, grades trade execution quality (A+, A, B, C), and enforces strict fail-closed rejection for setups below minRiskRewardRatio.',
+    dependencies: [
+      'ENTRY_ENGINE',
+      'STRUCTURAL_STOP_LOSS_ENGINE',
+      'STRUCTURAL_TAKE_PROFIT_ENGINE',
+    ],
     enforcesHardRules: [],
   },
 
@@ -808,7 +882,7 @@ export const SYSTEM_ARCHITECTURE_REGISTRY: Readonly<
     moduleIdNumber: 34,
     name: 'Identity & Session Service',
     layer: 'PRODUCT_ACCESS_AND_MONETIZATION',
-    engineStatus: 'NOT_BUILT',
+    engineStatus: 'BUILT',
     description:
       'Manages user authentication, credentials, session tokens, device fingerprinting, and security lifecycle.',
     dependencies: [],
@@ -856,7 +930,7 @@ export const SYSTEM_ARCHITECTURE_REGISTRY: Readonly<
     moduleIdNumber: 38,
     name: 'Access Gateway & Engine Protection',
     layer: 'PRODUCT_ACCESS_AND_MONETIZATION',
-    engineStatus: 'NOT_BUILT',
+    engineStatus: 'BUILT',
     description:
       'Enforces reverse-proxy rate limiting, token verification, and fail-closed security shielding for core SMC calculation engines.',
     dependencies: ['ACCESS_PROFILE_ENGINE'],

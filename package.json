@@ -10,7 +10,7 @@
     "start": "node server.ts",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx src/tests/smcMultiTimeframeIntegration.test.ts && tsx src/tests/derivMarketDataLayer.test.ts && tsx src/tests/watchlistAndIsolation.test.ts"
+    "test": "tsx src/tests/smcMultiTimeframeIntegration.test.ts && tsx src/tests/derivMarketDataLayer.test.ts && tsx src/tests/watchlistAndIsolation.test.ts && tsx src/tests/identityAndAccessGateway.test.ts && tsx src/tests/userMessageTranslation.test.ts && tsx src/tests/authVulnerabilityRemediation.test.ts && tsx src/tests/confluenceAndRiskExecution.test.ts && tsx src/tests/ownerAdminProvisioning.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

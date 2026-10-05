@@ -7,10 +7,10 @@
  * Dedicated client-side service consuming already-processed canonical market data
  * and live streaming events from the Express server (/api/market/*).
  *
- * HARD SECURITY & ARCHITECTURAL INVARIANTS:
- * - NO direct browser WebSocket connection to Deriv.
- * - ZERO references to DERIV_API_TOKEN (server-managed only).
- * - Receives strictly sanitized, canonical SMC contracts.
+ * Integrated with M38 Access Gateway & M34 Identity:
+ * - Injects signed session Bearer token into all API calls
+ * - Provides token parameter to EventSource for SSE authentication
+ * - Handles authentication state and admin credentials
  */
 
 import {
@@ -55,6 +55,70 @@ export type StreamEventListener = (event: StreamEvent) => void;
 export class MarketDataApiClient {
   private static eventSource: EventSource | null = null;
   private static readonly eventListeners: Set<StreamEventListener> = new Set();
+  private static authToken: string | null = null;
+
+  public static setAuthToken(token: string | null): void {
+    this.authToken = token;
+    if (typeof window !== 'undefined') {
+      if (token) {
+        sessionStorage.setItem('smc_session_token', token);
+      } else {
+        sessionStorage.removeItem('smc_session_token');
+      }
+    }
+  }
+
+  public static getAuthToken(): string | null {
+    if (!this.authToken && typeof window !== 'undefined') {
+      this.authToken = sessionStorage.getItem('smc_session_token');
+    }
+    return this.authToken;
+  }
+
+  private static getHeaders(customHeaders?: HeadersInit): HeadersInit {
+    const headers: Record<string, string> = {};
+    if (customHeaders) {
+      Object.assign(headers, customHeaders);
+    }
+    const token = this.getAuthToken();
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    return headers;
+  }
+
+  private static authRequiredHandler?: () => void;
+
+  /**
+   * Registers a callback invoked whenever authentication is missing or revoked.
+   */
+  public static onAuthRequired(handler: () => void): void {
+    this.authRequiredHandler = handler;
+  }
+
+  /**
+   * Handles authentication failure by clearing storage and notifying listeners.
+   */
+  public static handleAuthFailure(): void {
+    this.setAuthToken(null);
+    if (this.authRequiredHandler) {
+      this.authRequiredHandler();
+    }
+  }
+
+  /**
+   * Verifies whether the client has an active authenticated session token.
+   * NEVER automatically logs in with admin credentials.
+   * If unauthenticated, notifies listeners so client redirects to the login screen.
+   */
+  public static async ensureAuthenticated(): Promise<string | null> {
+    const existing = this.getAuthToken();
+    if (!existing) {
+      this.handleAuthFailure();
+      return null;
+    }
+    return existing;
+  }
 
   /**
    * Fetches backend health status, Deriv connection metrics, and token status.
@@ -71,7 +135,10 @@ export class MarketDataApiClient {
    * Fetches active symbols verification report.
    */
   public static async fetchActiveSymbols(): Promise<SymbolVerificationReport> {
-    const res = await fetch('/api/market/active-symbols');
+    await this.ensureAuthenticated();
+    const res = await fetch('/api/market/active-symbols', {
+      headers: this.getHeaders(),
+    });
     if (!res.ok) {
       throw new Error(`Failed to fetch active symbols: HTTP ${res.status}`);
     }
@@ -86,10 +153,12 @@ export class MarketDataApiClient {
     timeframe: Timeframe,
     limit = 100,
   ): Promise<readonly CanonicalCandle[]> {
+    await this.ensureAuthenticated();
     const res = await fetch(
       `/api/market/candles?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(
         timeframe,
       )}&limit=${limit}`,
+      { headers: this.getHeaders() },
     );
     if (!res.ok) {
       throw new Error(`Failed to fetch candles: HTTP ${res.status}`);
@@ -103,8 +172,10 @@ export class MarketDataApiClient {
   public static async fetchAllCandles(
     symbol: InstrumentSymbol,
   ): Promise<Record<Timeframe, readonly CanonicalCandle[]>> {
+    await this.ensureAuthenticated();
     const res = await fetch(
       `/api/market/all-candles?symbol=${encodeURIComponent(symbol)}`,
+      { headers: this.getHeaders() },
     );
     if (!res.ok) {
       throw new Error(`Failed to fetch all candles: HTTP ${res.status}`);
@@ -118,8 +189,10 @@ export class MarketDataApiClient {
   public static async fetchLatestTick(
     symbol: InstrumentSymbol,
   ): Promise<CanonicalTick | null> {
+    await this.ensureAuthenticated();
     const res = await fetch(
       `/api/market/latest-tick?symbol=${encodeURIComponent(symbol)}`,
+      { headers: this.getHeaders() },
     );
     if (!res.ok) {
       throw new Error(`Failed to fetch latest tick: HTTP ${res.status}`);
@@ -133,8 +206,10 @@ export class MarketDataApiClient {
   public static async fetchSafety(
     symbol: InstrumentSymbol,
   ): Promise<{ allowed: boolean; blocks: readonly ActiveSafetyBlock[] }> {
+    await this.ensureAuthenticated();
     const res = await fetch(
       `/api/market/safety?symbol=${encodeURIComponent(symbol)}`,
+      { headers: this.getHeaders() },
     );
     if (!res.ok) {
       throw new Error(`Failed to fetch safety status: HTTP ${res.status}`);
@@ -152,8 +227,10 @@ export class MarketDataApiClient {
     records: readonly CandleLineageRecord[];
     summary: LineageAuditSummary;
   }> {
+    await this.ensureAuthenticated();
     const res = await fetch(
       `/api/market/lineage?symbol=${encodeURIComponent(symbol)}&limit=${limit}`,
+      { headers: this.getHeaders() },
     );
     if (!res.ok) {
       throw new Error(`Failed to fetch lineage: HTTP ${res.status}`);
@@ -167,9 +244,10 @@ export class MarketDataApiClient {
   public static async startStreaming(
     symbols: readonly InstrumentSymbol[],
   ): Promise<boolean> {
+    await this.ensureAuthenticated();
     const res = await fetch('/api/market/stream/start', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: this.getHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ symbols }),
     });
     if (!res.ok) {
@@ -183,9 +261,10 @@ export class MarketDataApiClient {
    * Requests backend to stop streaming.
    */
   public static async stopStreaming(): Promise<boolean> {
+    await this.ensureAuthenticated();
     const res = await fetch('/api/market/stream/stop', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: this.getHeaders({ 'Content-Type': 'application/json' }),
     });
     if (!res.ok) {
       throw new Error(`Failed to stop streaming: HTTP ${res.status}`);
@@ -200,9 +279,10 @@ export class MarketDataApiClient {
   public static async triggerBackfill(
     symbol: InstrumentSymbol,
   ): Promise<readonly DerivBackfillJobResult[]> {
+    await this.ensureAuthenticated();
     const res = await fetch('/api/market/backfill', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: this.getHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ symbol }),
     });
     if (!res.ok) {
@@ -222,9 +302,10 @@ export class MarketDataApiClient {
     latestCandle: CanonicalCandle | null;
     candlesCount: number;
   }> {
+    await this.ensureAuthenticated();
     const res = await fetch('/api/market/fetch-live', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: this.getHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ symbol }),
     });
     if (!res.ok) {
@@ -238,7 +319,10 @@ export class MarketDataApiClient {
    * Browse-only: does not trigger subscriptions or engine analysis.
    */
   public static async fetchCatalog(): Promise<readonly CatalogInstrumentItem[]> {
-    const res = await fetch('/api/market/catalog');
+    await this.ensureAuthenticated();
+    const res = await fetch('/api/market/catalog', {
+      headers: this.getHeaders(),
+    });
     if (!res.ok) {
       throw new Error(`Failed to fetch catalog: HTTP ${res.status}`);
     }
@@ -249,7 +333,10 @@ export class MarketDataApiClient {
    * Fetches the current watchlisted instruments.
    */
   public static async fetchWatchlist(): Promise<readonly WatchlistEntry[]> {
-    const res = await fetch('/api/market/watchlist');
+    await this.ensureAuthenticated();
+    const res = await fetch('/api/market/watchlist', {
+      headers: this.getHeaders(),
+    });
     if (!res.ok) {
       throw new Error(`Failed to fetch watchlist: HTTP ${res.status}`);
     }
@@ -259,10 +346,13 @@ export class MarketDataApiClient {
   /**
    * Adds an instrument to the active watchlist (triggers multiplexed subscription & backfill).
    */
-  public static async addToWatchlist(symbol: string): Promise<{ success: boolean; entry: WatchlistEntry }> {
+  public static async addToWatchlist(
+    symbol: string,
+  ): Promise<{ success: boolean; entry: WatchlistEntry }> {
+    await this.ensureAuthenticated();
     const res = await fetch('/api/market/watchlist/add', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: this.getHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ symbol }),
     });
     if (!res.ok) {
@@ -274,10 +364,13 @@ export class MarketDataApiClient {
   /**
    * Removes an instrument from the active watchlist (unsubscribes and fully clears state).
    */
-  public static async removeFromWatchlist(symbol: string): Promise<{ success: boolean }> {
+  public static async removeFromWatchlist(
+    symbol: string,
+  ): Promise<{ success: boolean }> {
+    await this.ensureAuthenticated();
     const res = await fetch('/api/market/watchlist/remove', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: this.getHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ symbol }),
     });
     if (!res.ok) {
@@ -296,7 +389,11 @@ export class MarketDataApiClient {
 
     if (!this.eventSource && typeof window !== 'undefined') {
       try {
-        const es = new EventSource('/api/market/events');
+        const token = this.getAuthToken();
+        const url = token
+          ? `/api/market/events?token=${encodeURIComponent(token)}`
+          : '/api/market/events';
+        const es = new EventSource(url);
         this.eventSource = es;
 
         es.onmessage = (ev) => {

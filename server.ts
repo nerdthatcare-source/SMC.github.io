@@ -21,6 +21,14 @@ import { createServer as createViteServer } from 'vite';
 // Load server-side environment variables
 dotenv.config();
 
+import authRoutes from './src/routes/authRoutes';
+import adminRoutes from './src/routes/adminRoutes';
+import {
+  accessGateway,
+  respondAndLog,
+  AuthenticatedRequest,
+} from './src/services/accessGateway';
+import { IdentitySessionService } from './src/services/identitySessionService';
 import { CanonicalDataEngine } from './src/engine/canonicalDataEngine';
 import { DatabaseConnection } from './src/db/database';
 import { DerivCatalogEngine } from './src/engine/derivCatalogEngine';
@@ -117,7 +125,13 @@ watchlistEngine.subscribe((watchlist) => {
 // REST API ROUTES (/api/*)
 // ============================================================================
 
-// 1. Health & Server-Managed Connection Status
+// Mount M34 Authentication & Identity Routes
+app.use('/api/auth', authRoutes);
+
+// Mount OWNER-Only Administration Routes
+app.use('/api/admin', adminRoutes);
+
+// 1. Health & Server-Managed Connection Status (Public Health Monitor)
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -131,8 +145,8 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// 2. Real-Time SSE Stream Endpoint
-app.get('/api/market/events', (req, res) => {
+// 2. Real-Time SSE Stream Endpoint (M38 Gateway Protected)
+app.get('/api/market/events', accessGateway(), (req: AuthenticatedRequest, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
@@ -149,178 +163,290 @@ app.get('/api/market/events', (req, res) => {
   });
   res.write(`data: ${initial}\n\n`);
 
+  // Log SSE client connection
+  DatabaseConnection.getInstance().then((conn) => {
+    conn.logAuditEvent(
+      'SSE_STREAM_CONNECT',
+      '/api/market/events',
+      { userId: req.user?.id, email: req.user?.email },
+      req.user?.id,
+      req.ip,
+    );
+  });
+
   req.on('close', () => {
     sseClients.delete(res);
   });
 });
 
-// 3. Active Tradeable Symbols Catalog Verification
-app.get('/api/market/active-symbols', async (req, res) => {
+// 3. Active Tradeable Symbols Catalog Verification (M38 Gateway Protected)
+app.get('/api/market/active-symbols', accessGateway(), async (req: AuthenticatedRequest, res) => {
   try {
     const rawActive = await engine.derivAdapter.getActiveSymbols();
     const report = SymbolMappingEngine.verifyAgainstActiveSymbols(rawActive);
-    res.json(report);
+    await respondAndLog(req, res, report, { action: 'MARKET_ACTIVE_SYMBOLS' });
   } catch (err: any) {
-    // If Deriv endpoint is unreachable, synthesize verification from catalog
     const report = SymbolMappingEngine.verifyAgainstActiveSymbols([]);
-    res.json(report);
+    await respondAndLog(req, res, report, { action: 'MARKET_ACTIVE_SYMBOLS' });
   }
 });
 
-// 4. Query Canonical Candles for Symbol and Timeframe
-app.get('/api/market/candles', (req, res) => {
+// 4. Query Canonical Candles for Symbol and Timeframe (M38 Gateway Protected)
+app.get('/api/market/candles', accessGateway(), async (req: AuthenticatedRequest, res) => {
   const symbol = (req.query.symbol as InstrumentSymbol) || 'EUR_USD';
   const timeframe = (req.query.timeframe as Timeframe) || '15M';
   const limit = req.query.limit ? Number(req.query.limit) : 100;
 
   const candles = engine.getCandles(symbol, timeframe, { limit });
-  res.json(candles);
-});
-
-// 5. Query All Timeframes at Once (1H, 15M, 5M, 1M)
-app.get('/api/market/all-candles', (req, res) => {
-  const symbol = (req.query.symbol as InstrumentSymbol) || 'EUR_USD';
-
-  res.json({
-    '1H': engine.getCandles(symbol, '1H', { limit: 100 }),
-    '15M': engine.getCandles(symbol, '15M', { limit: 100 }),
-    '5M': engine.getCandles(symbol, '5M', { limit: 100 }),
-    '1M': engine.getCandles(symbol, '1M', { limit: 100 }),
+  await respondAndLog(req, res, candles, {
+    action: 'MARKET_CANDLES',
+    resource: `${symbol}_${timeframe}`,
   });
 });
 
-// 6. Latest Canonical Tick
-app.get('/api/market/latest-tick', (req, res) => {
+// 5. Query All Timeframes at Once (Section 7.1 ADMIN ONLY)
+app.get(
+  '/api/market/all-candles',
+  accessGateway({ adminOnly: true }),
+  async (req: AuthenticatedRequest, res) => {
+    const symbol = (req.query.symbol as InstrumentSymbol) || 'EUR_USD';
+    const allCandles = {
+      '1H': engine.getCandles(symbol, '1H', { limit: 100 }),
+      '15M': engine.getCandles(symbol, '15M', { limit: 100 }),
+      '5M': engine.getCandles(symbol, '5M', { limit: 100 }),
+      '1M': engine.getCandles(symbol, '1M', { limit: 100 }),
+    };
+
+    await respondAndLog(req, res, allCandles, {
+      action: 'MARKET_ALL_CANDLES',
+      resource: symbol,
+    });
+  },
+);
+
+// 6. Latest Canonical Tick (M38 Gateway Protected)
+app.get('/api/market/latest-tick', accessGateway(), async (req: AuthenticatedRequest, res) => {
   const symbol = (req.query.symbol as InstrumentSymbol) || 'EUR_USD';
   const tick = engine.getLatestTick(symbol);
-  res.json(tick || null);
+  await respondAndLog(req, res, tick || null, {
+    action: 'MARKET_LATEST_TICK',
+    resource: symbol,
+  });
 });
 
-// 7. Safety Gates & "Why Not Trade" Active Blocks
-app.get('/api/market/safety', (req, res) => {
+// 7. Safety Gates & "Why Not Trade" Active Blocks (M38 Gateway Protected)
+app.get('/api/market/safety', accessGateway(), async (req: AuthenticatedRequest, res) => {
   const symbol = (req.query.symbol as InstrumentSymbol) || 'EUR_USD';
   const decision = engine.safetyEngine.canAnalyze(symbol);
-  res.json({
-    allowed: decision.allowed,
-    blocks: engine.safetyEngine.getAllActiveBlocks(),
-  });
+  await respondAndLog(
+    req,
+    res,
+    {
+      allowed: decision.allowed,
+      blocks: engine.safetyEngine.getAllActiveBlocks(),
+    },
+    { action: 'MARKET_SAFETY', resource: symbol },
+  );
 });
 
-// 8. Data Lineage Audit Trail
-app.get('/api/market/lineage', (req, res) => {
-  const symbol = (req.query.symbol as InstrumentSymbol) || 'EUR_USD';
-  const limit = req.query.limit ? Number(req.query.limit) : 30;
+// 8. Data Lineage Audit Trail (Section 7.1 ADMIN ONLY)
+app.get(
+  '/api/market/lineage',
+  accessGateway({ adminOnly: true }),
+  async (req: AuthenticatedRequest, res) => {
+    const symbol = (req.query.symbol as InstrumentSymbol) || 'EUR_USD';
+    const limit = req.query.limit ? Number(req.query.limit) : 30;
 
-  res.json({
-    records: engine.lineageEngine.getRecentLineage(symbol, limit),
-    summary: engine.lineageEngine.getAuditSummary(),
-  });
-});
+    const data = {
+      records: engine.lineageEngine.getRecentLineage(symbol, limit),
+      summary: engine.lineageEngine.getAuditSummary(),
+    };
 
-// 9. Start Streaming Subscriptions on Deriv Adapter
-app.post('/api/market/stream/start', async (req, res) => {
-  const symbols = (req.body.symbols as InstrumentSymbol[]) || ['EUR_USD'];
-  try {
-    await engine.startStreaming(symbols);
-    res.json({ success: true, streaming: true, symbols });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// 10. Stop Streaming Subscriptions
-app.post('/api/market/stream/stop', async (req, res) => {
-  try {
-    await engine.stopStreaming();
-    res.json({ success: true, streaming: false });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// 11. Trigger Backfill Recovery across 1H, 15M, 5M, 1M
-app.post('/api/market/backfill', async (req, res) => {
-  const symbol = (req.body.symbol as InstrumentSymbol) || 'EUR_USD';
-  try {
-    const results = await engine.backfillSymbol(symbol);
-    res.json({ success: true, results });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// 12. Fetch Live frxEURUSD / Instrument from Deriv
-app.post('/api/market/fetch-live', async (req, res) => {
-  const symbol = (req.body.symbol as InstrumentSymbol) || 'EUR_USD';
-  try {
-    await engine.marketDataEngine.ingestHistoricalFromDeriv(symbol, '1H', 50);
-    await engine.marketDataEngine.ingestHistoricalFromDeriv(symbol, '15M', 50);
-    await engine.marketDataEngine.ingestHistoricalFromDeriv(symbol, '5M', 50);
-    await engine.marketDataEngine.ingestHistoricalFromDeriv(symbol, '1M', 50);
-    await engine.startStreaming([symbol]);
-
-    const latestTick = engine.getLatestTick(symbol);
-    const latestCandle = engine.getLatestCandle(symbol, '15M');
-    const candlesCount = engine.getCandles(symbol, '15M').length;
-
-    res.json({
-      success: true,
-      symbol,
-      latestTick,
-      latestCandle,
-      candlesCount,
+    await respondAndLog(req, res, data, {
+      action: 'MARKET_LINEAGE',
+      resource: symbol,
     });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
+  },
+);
 
-// 13. Filtered Browsable Catalog (Browse-only: 4 confirmed categories, no subscriptions)
-app.get(['/api/market/catalog', '/api/catalog'], async (req, res) => {
-  try {
-    const force = req.query.refresh === 'true';
-    const catalog = await DerivCatalogEngine.getCatalog(engine.derivAdapter, force);
-    res.json(catalog);
-  } catch (err: any) {
-    console.error('[Server] Error fetching catalog:', err);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
+// 9. Start Streaming Subscriptions on Deriv Adapter (Section 7.1 ADMIN ONLY)
+app.post(
+  '/api/market/stream/start',
+  accessGateway({ adminOnly: true }),
+  async (req: AuthenticatedRequest, res) => {
+    const symbols = (req.body.symbols as InstrumentSymbol[]) || ['EUR_USD'];
+    try {
+      await engine.startStreaming(symbols);
+      await respondAndLog(
+        req,
+        res,
+        { success: true, streaming: true, symbols },
+        { action: 'STREAM_START' },
+      );
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  },
+);
 
-// 14. Query Current Watchlist
-app.get(['/api/market/watchlist', '/api/watchlist'], (req, res) => {
-  res.json(watchlistEngine.getWatchlist());
-});
+// 10. Stop Streaming Subscriptions (Section 7.1 ADMIN ONLY)
+app.post(
+  '/api/market/stream/stop',
+  accessGateway({ adminOnly: true }),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      await engine.stopStreaming();
+      await respondAndLog(
+        req,
+        res,
+        { success: true, streaming: false },
+        { action: 'STREAM_STOP' },
+      );
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  },
+);
 
-// 15. Add Instrument to Watchlist (Multiplexed WebSocket + Staggered Backfill)
-app.post(['/api/market/watchlist/add', '/api/watchlist/add'], async (req, res) => {
-  const rawSymbol = req.body.symbol;
-  if (!rawSymbol) {
-    return res.status(400).json({ success: false, error: 'Symbol is required' });
-  }
-  try {
-    const entry = await watchlistEngine.addInstrument(rawSymbol);
-    res.json({ success: true, entry });
-  } catch (err: any) {
-    console.error(`[Server] Failed to add ${rawSymbol} to watchlist:`, err);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
+// 11. Trigger Backfill Recovery across 1H, 15M, 5M, 1M (Section 7.1 ADMIN ONLY)
+app.post(
+  '/api/market/backfill',
+  accessGateway({ adminOnly: true }),
+  async (req: AuthenticatedRequest, res) => {
+    const symbol = (req.body.symbol as InstrumentSymbol) || 'EUR_USD';
+    try {
+      const results = await engine.backfillSymbol(symbol);
+      await respondAndLog(
+        req,
+        res,
+        { success: true, results },
+        { action: 'MARKET_BACKFILL', resource: symbol },
+      );
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  },
+);
 
-// 16. Remove Instrument from Watchlist (Unsubscribe + Full State Teardown)
-app.post(['/api/market/watchlist/remove', '/api/watchlist/remove'], async (req, res) => {
-  const rawSymbol = req.body.symbol;
-  if (!rawSymbol) {
-    return res.status(400).json({ success: false, error: 'Symbol is required' });
-  }
-  try {
-    const removed = await watchlistEngine.removeInstrument(rawSymbol);
-    res.json({ success: removed });
-  } catch (err: any) {
-    console.error(`[Server] Failed to remove ${rawSymbol} from watchlist:`, err);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
+// 12. Fetch Live frxEURUSD / Instrument from Deriv (Section 7.1 ADMIN ONLY)
+app.post(
+  '/api/market/fetch-live',
+  accessGateway({ adminOnly: true }),
+  async (req: AuthenticatedRequest, res) => {
+    const symbol = (req.body.symbol as InstrumentSymbol) || 'EUR_USD';
+    try {
+      await engine.marketDataEngine.ingestHistoricalFromDeriv(symbol, '1H', 50);
+      await engine.marketDataEngine.ingestHistoricalFromDeriv(symbol, '15M', 50);
+      await engine.marketDataEngine.ingestHistoricalFromDeriv(symbol, '5M', 50);
+      await engine.marketDataEngine.ingestHistoricalFromDeriv(symbol, '1M', 50);
+      await engine.startStreaming([symbol]);
+
+      const latestTick = engine.getLatestTick(symbol);
+      const latestCandle = engine.getLatestCandle(symbol, '15M');
+      const candlesCount = engine.getCandles(symbol, '15M').length;
+
+      await respondAndLog(
+        req,
+        res,
+        {
+          success: true,
+          symbol,
+          latestTick,
+          latestCandle,
+          candlesCount,
+        },
+        { action: 'MARKET_FETCH_LIVE', resource: symbol },
+      );
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  },
+);
+
+// 13. Filtered Browsable Catalog (M38 Gateway Protected)
+app.get(
+  ['/api/market/catalog', '/api/catalog'],
+  accessGateway(),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const force = req.query.refresh === 'true';
+      const catalog = await DerivCatalogEngine.getCatalog(
+        engine.derivAdapter,
+        force,
+      );
+      await respondAndLog(req, res, catalog, { action: 'MARKET_CATALOG' });
+    } catch (err: any) {
+      console.error('[Server] Error fetching catalog:', err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  },
+);
+
+// 14. Query Current Watchlist (M38 Gateway Protected)
+app.get(
+  ['/api/market/watchlist', '/api/watchlist'],
+  accessGateway(),
+  async (req: AuthenticatedRequest, res) => {
+    await respondAndLog(req, res, watchlistEngine.getWatchlist(), {
+      action: 'MARKET_WATCHLIST',
+    });
+  },
+);
+
+// 15. Add Instrument to Watchlist (Section 7.1 ADMIN ONLY)
+app.post(
+  ['/api/market/watchlist/add', '/api/watchlist/add'],
+  accessGateway({ adminOnly: true }),
+  async (req: AuthenticatedRequest, res) => {
+    const rawSymbol = req.body.symbol;
+    if (!rawSymbol) {
+      return res
+        .status(400)
+        .json({ success: false, error: 'Symbol is required' });
+    }
+    try {
+      const entry = await watchlistEngine.addInstrument(rawSymbol);
+      await respondAndLog(
+        req,
+        res,
+        { success: true, entry },
+        { action: 'WATCHLIST_ADD', resource: rawSymbol },
+      );
+    } catch (err: any) {
+      console.error(`[Server] Failed to add ${rawSymbol} to watchlist:`, err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  },
+);
+
+// 16. Remove Instrument from Watchlist (Section 7.1 ADMIN ONLY)
+app.post(
+  ['/api/market/watchlist/remove', '/api/watchlist/remove'],
+  accessGateway({ adminOnly: true }),
+  async (req: AuthenticatedRequest, res) => {
+    const rawSymbol = req.body.symbol;
+    if (!rawSymbol) {
+      return res
+        .status(400)
+        .json({ success: false, error: 'Symbol is required' });
+    }
+    try {
+      const removed = await watchlistEngine.removeInstrument(rawSymbol);
+      await respondAndLog(
+        req,
+        res,
+        { success: removed },
+        { action: 'WATCHLIST_REMOVE', resource: rawSymbol },
+      );
+    } catch (err: any) {
+      console.error(
+        `[Server] Failed to remove ${rawSymbol} from watchlist:`,
+        err,
+      );
+      res.status(500).json({ success: false, error: err.message });
+    }
+  },
+);
 
 // ============================================================================
 // VITE MIDDLEWARE & STATIC ASSET SERVING
@@ -329,6 +455,9 @@ app.post(['/api/market/watchlist/remove', '/api/watchlist/remove'], async (req, 
 const isProduction = process.env.NODE_ENV === 'production';
 
 async function startServer() {
+  // CRITICAL SECURITY VALIDATION: Fail-closed on missing SESSION_SECRET
+  IdentitySessionService.getSessionSecret();
+
   if (!isProduction) {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -348,6 +477,8 @@ async function startServer() {
     try {
       await DatabaseConnection.getInstance();
       console.info('[Server] Managed PostgreSQL (Cloud SQL) database connection established & Section 6 schema verified.');
+      await IdentitySessionService.ensureDefaultUsers();
+      console.info('[Server] M34 Identity & Session roles initialized (Admin/Owner & Standard Trader).');
     } catch (dbErr) {
       console.error('[Server] Database initialization failed:', dbErr);
     }

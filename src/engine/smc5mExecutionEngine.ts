@@ -65,11 +65,19 @@ export interface SweepStageResult {
   readonly timestamp?: number;
 }
 
+export type CandlestickTriggerPattern =
+  | 'DISPLACEMENT'
+  | 'BULLISH_ENGULFING'
+  | 'BEARISH_ENGULFING'
+  | 'BULLISH_PIN_BAR'
+  | 'BEARISH_PIN_BAR';
+
 export interface DisplacementStageResult {
   readonly detected: boolean;
-  readonly ratio: number; // > 0.65
+  readonly ratio: number; // > 0.65 or ratio of candle
   readonly candle: Candle | null;
   readonly direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  readonly patternType?: CandlestickTriggerPattern;
   readonly timestamp?: number;
 }
 
@@ -340,15 +348,19 @@ export class Smc5mExecutionEngine {
     );
 
     // Look for an aligned sweep that has a subsequent displacement impulse (body/range > 0.65)
+    // OR an alternate valid classic reversal candlestick pattern (bullish/bearish engulfing, pin bar)
     let selectedSweep: PoolLifecycleSnapshot | null = null;
     let maxDisplacementRatio = 0;
     let displacementCandle: Candle | null = null;
     let displacementDetected = false;
+    let detectedPatternType: CandlestickTriggerPattern | undefined = undefined;
 
     for (const snap of alignedSweepSnapshots) {
       const sTimestamp = snap.sweepEvent?.timestamp ?? snap.pool.originTimestamp;
-      for (const c of candles5M) {
+      for (let i = 0; i < candles5M.length; i++) {
+        const c = candles5M[i];
         if (c.timestamp < sTimestamp) continue;
+        const prev = i > 0 ? candles5M[i - 1] : undefined;
         const range = c.high - c.low;
         if (range <= 0.00001) continue;
         const body = Math.abs(c.close - c.open);
@@ -357,12 +369,47 @@ export class Smc5mExecutionEngine {
         const isDirectionCorrect =
           htfBias === 'BULLISH' ? c.close > c.open : c.close < c.open;
 
+        // 1. Standard displacement (body/range > 0.65)
         if (ratio > 0.65 && isDirectionCorrect) {
           if (ratio > maxDisplacementRatio) {
             maxDisplacementRatio = ratio;
             displacementCandle = c;
             displacementDetected = true;
+            detectedPatternType = 'DISPLACEMENT';
             selectedSweep = snap;
+          }
+        }
+
+        // 2. Alternate valid trigger: Classic candlestick reversal patterns
+        if (!displacementDetected) {
+          if (htfBias === 'BULLISH') {
+            if (Smc5mExecutionEngine.isBullishEngulfing(c, prev)) {
+              maxDisplacementRatio = Math.max(ratio, 0.66);
+              displacementCandle = c;
+              displacementDetected = true;
+              detectedPatternType = 'BULLISH_ENGULFING';
+              selectedSweep = snap;
+            } else if (Smc5mExecutionEngine.isBullishPinBar(c)) {
+              maxDisplacementRatio = Math.max(ratio, 0.66);
+              displacementCandle = c;
+              displacementDetected = true;
+              detectedPatternType = 'BULLISH_PIN_BAR';
+              selectedSweep = snap;
+            }
+          } else if (htfBias === 'BEARISH') {
+            if (Smc5mExecutionEngine.isBearishEngulfing(c, prev)) {
+              maxDisplacementRatio = Math.max(ratio, 0.66);
+              displacementCandle = c;
+              displacementDetected = true;
+              detectedPatternType = 'BEARISH_ENGULFING';
+              selectedSweep = snap;
+            } else if (Smc5mExecutionEngine.isBearishPinBar(c)) {
+              maxDisplacementRatio = Math.max(ratio, 0.66);
+              displacementCandle = c;
+              displacementDetected = true;
+              detectedPatternType = 'BEARISH_PIN_BAR';
+              selectedSweep = snap;
+            }
           }
         }
       }
@@ -439,6 +486,7 @@ export class Smc5mExecutionEngine {
       ratio: Math.round(maxDisplacementRatio * 100) / 100,
       candle: displacementCandle,
       direction: htfBias === 'BULLISH' ? 'BULLISH' : 'BEARISH',
+      patternType: detectedPatternType,
       timestamp: displacementCandle?.timestamp,
     };
 
@@ -452,7 +500,7 @@ export class Smc5mExecutionEngine {
         triggerState: 'AWAITING_DISPLACEMENT',
         isTriggerConfirmed: false,
         contradictsHtfBias: false,
-        rejectionReason: `AWAITING_DISPLACEMENT: No 5M candle with body/range ratio > 0.65 in direction of ${htfBias} bias`,
+        rejectionReason: `AWAITING_DISPLACEMENT: No 5M candle with body/range ratio > 0.65 or reversal candlestick pattern (engulfing/pin bar) in direction of ${htfBias} bias`,
         sweepStage,
         displacementStage,
         structureBreakStage: { detected: false, breakEvent: null },
@@ -722,5 +770,51 @@ export class Smc5mExecutionEngine {
       symbolOverride: symbol,
       runContext,
     });
+  }
+
+  /**
+   * Evaluates if current and previous candle form a classic Bullish Engulfing reversal pattern.
+   */
+  public static isBullishEngulfing(curr: Candle, prev?: Candle): boolean {
+    if (!prev) return false;
+    const prevBearish = prev.close < prev.open;
+    const currBullish = curr.close > curr.open;
+    if (!prevBearish || !currBullish) return false;
+    return curr.close >= prev.open && curr.open <= prev.close;
+  }
+
+  /**
+   * Evaluates if current and previous candle form a classic Bearish Engulfing reversal pattern.
+   */
+  public static isBearishEngulfing(curr: Candle, prev?: Candle): boolean {
+    if (!prev) return false;
+    const prevBullish = prev.close > prev.open;
+    const currBearish = curr.close < curr.open;
+    if (!prevBullish || !currBearish) return false;
+    return curr.close <= prev.open && curr.open >= prev.close;
+  }
+
+  /**
+   * Evaluates if candle forms a Bullish Pin Bar (long lower rejection wick).
+   */
+  public static isBullishPinBar(c: Candle): boolean {
+    const range = c.high - c.low;
+    if (range <= 0.00001) return false;
+    const body = Math.abs(c.close - c.open);
+    const lowerWick = Math.min(c.open, c.close) - c.low;
+    const upperWick = c.high - Math.max(c.open, c.close);
+    return lowerWick >= 2 * body && lowerWick >= 0.5 * range && upperWick <= 0.35 * range;
+  }
+
+  /**
+   * Evaluates if candle forms a Bearish Pin Bar (long upper rejection wick).
+   */
+  public static isBearishPinBar(c: Candle): boolean {
+    const range = c.high - c.low;
+    if (range <= 0.00001) return false;
+    const body = Math.abs(c.close - c.open);
+    const upperWick = c.high - Math.max(c.open, c.close);
+    const lowerWick = Math.min(c.open, c.close) - c.low;
+    return upperWick >= 2 * body && upperWick >= 0.5 * range && lowerWick <= 0.35 * range;
   }
 }
